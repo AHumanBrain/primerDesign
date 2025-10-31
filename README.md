@@ -1,79 +1,108 @@
-Multiplex PCR Primer Designer
+Multiplex PCR Primer Designer CLI
 
-A command-line tool for designing specific and compatible primers for multiplex PCR, with a focus on preparing amplicons for next-generation sequencing.
+This is a command-line tool for designing specific, adapter-tailed primer pairs for multiplex PCR. The tool is built in Python and leverages primer3-py for primer design and a local NCBI BLAST+ installation for specificity checking.
 
-Overview
+It features two main modes of operation:
 
-This tool automates the process of designing primers for targeted sequencing. It takes a reference genome and a set of target regions (genes, coordinates, etc.) and uses a combination of Primer3 and BLAST to find optimal primer pairs. The core logic is built to handle specificity checks and multiplex compatibility, ensuring the designed primers work well together in a single reaction.
+Full Design Mode: An end-to-end pipeline that takes a genome and a list of target genes, designs specific primers, and adds sequencing adapter tails.
 
-Key Features
+Tail-Only Mode: A utility to quickly add adapter tails to pre-existing lists of forward and reverse primers.
 
-The development is planned in phases:
+Features
 
-Core Primer Design:
+Primer3 Integration: Designs thermodynamically optimal primers based on your sequence.
 
-Designs standard primer pairs for single genomic targets using the robust Primer3 engine.
+Automated Specificity Check: Automatically runs each candidate primer pair against a local BLAST database and filters for pairs where both primers have exactly one perfect hit in the genome.
 
-Accepts genomes (FASTA) and target regions (gene names via GFF, or coordinates via BED) as input.
+Robust File Handling: Automatically builds the required BLAST database from your genome, cleaning FASTA headers to prevent common errors.
 
-Outputs results in user-friendly formats, including a .csv for primer details and a .bed file for visualizing amplicons in a genome browser.
+Custom Tailing Logic: Hardcoded with specific adapter sequences, which are added to the reverse complement of the designed primers.
 
-Specificity & Multiplexing:
+Dual Output:
 
-Specificity Guarantee: Integrates with local BLAST to ensure designed primers are specific to the target region and will not produce off-target amplicons.
+.csv: A detailed report with all specific primer pairs, their properties (Tm, size), and the final tailed sequences.
 
-Multiplex Compatibility: Performs in silico checks for primer-dimer formation (self-dimers and cross-dimers) across the entire primer pool.
+.bed: A browser-ready file to visualize the location of your amplicons in a genome browser like IGV.
 
-Automated Pooling: Groups primers into compatible pools to maximize multiplexing efficiency.
+Setup
 
-Usability & Advanced Features:
+1. Clone the Repository
 
-Adapter Tailing: Optionally appends sequencing adapters (e.g., for Illumina, PacBio) to the 5' end of designed primers.
-
-Configuration Files: Allows for easy management of primer design parameters (Tm, size, GC content, etc.) through a simple configuration file.
-
-Detailed Logging: Provides clear feedback on the design process, including reasons for primer rejection.
-
-Installation
-
-Clone the repository:
-
-git clone [https://github.com/your-username/multiplex-primer-designer.git](https://github.com/your-username/multiplex-primer-designer.git)
-cd multiplex-primer-designer
+git clone [https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git](https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git)
+cd YOUR_REPO_NAME
 
 
-Create and activate a virtual environment (recommended):
+2. Install NCBI BLAST+
 
-python3 -m venv venv
-source venv/bin/activate
+This tool requires a local installation of NCBI BLAST+.
 
+Download: Get the installer from the NCBI BLAST+ Download Page. Choose the x64-win64.exe file.
 
-Install dependencies:
+Install: Run the installer. Crucially, ensure you check the box that says "Add BLAST to the system PATH".
 
-This tool requires a local installation of NCBI BLAST+. You can find installation instructions here.
+Verify: Close and re-open your terminal/PowerShell. Type blastn -version. You should see a version number printed.
 
-Install the required Python packages:
+3. Install Python Dependencies
+
+Make sure you are in the project's root directory (where requirements.txt is located).
 
 pip install -r requirements.txt
 
 
 Usage
 
-The basic command structure will be as follows. First, create a BLAST database for your reference genome:
+The script operates in one of two modes, determined by the arguments you provide.
 
-makeblastdb -in path/to/your/ecoli_genome.fasta -dbtype nucl -out ecoli_db
+Mode 1: Full Design Pipeline
+
+This mode designs primers from scratch. It requires a genome, a gene annotation file, a target list, and a name for the BLAST database.
+
+Note: The first time you run this command on a new genome, the script will automatically create the necessary BLAST database files (e..g, ecoli_db.nin, ecoli_db.nhr, etc.). This may take a few moments. Subsequent runs will be much faster as they will re-use the existing database.
+
+Example Command:
+
+python .\design.py --genome "path\to\ecoli_genome.fna" ^
+                  --gff "path\to\ecoli_annotations.gff" ^
+                  --target-file "path\to\my_targets.txt" ^
+                  --blast-db "ecoli_db" ^
+                  --output-prefix "ecoli_run_1"
 
 
-Then, run the primer design script:
+--genome: Path to your genome FASTA file.
 
-python design_primers.py \
-    --genome path/to/your/ecoli_genome.fasta \
-    --gff path/to/your/ecoli_genes.gff \
-    --target-id gyrA \
-    --blast-db ecoli_db \
-    --output-prefix ecoli_gyrA_primers
+--gff: Path to your gene annotation file (GFF/GFF3).
+
+--target-file: A simple .txt file with one gene name (matching the GFF) per line.
+
+--blast-db: The desired prefix for your BLAST database (e.g., "ecoli_db").
+
+--output-prefix: The base name for your output files (e.g., ecoli_run_1.csv and ecoli_run_1.bed).
+
+Mode 2: Tail-Only Utility
+
+This mode skips all design and BLAST steps. It simply reads your primer lists, applies the hardcoded tailing logic, and saves the output.
+
+First, create your primer files (e.g., my_fwd_primers.txt and my_rev_primers.txt) with one primer sequence per line.
+
+Example Command:
+
+python .\design.py --tail-fwd-file "my_fwd_primers.txt" ^
+                  --tail-rev-file "my_rev_primers.txt" ^
+                  --output-prefix "my_tailed_primers"
 
 
-This will generate ecoli_gyrA_primers.csv and ecoli_gyrA_primers.bed.
+--tail-fwd-file: Path to your file of forward primers.
 
-This project is currently under active development.
+--tail-rev-file: Path to your file of reverse primers.
+
+--output-prefix: The base name for your output .csv file.
+
+File Descriptions
+
+design.py: The main Python script.
+
+requirements.txt: A list of required Python libraries.
+
+.gitignore: Standard Python gitignore file.
+
+README.md: This file.
