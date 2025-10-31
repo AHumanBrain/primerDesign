@@ -85,22 +85,24 @@ def parse_gff(gff_file):
 def extract_target_sequence(genome_records, gene_coords, target_id):
     """Extracts the DNA sequence for a target gene from the genome."""
     if target_id not in gene_coords:
-        print(f"Warning: Target ID '{target_id}' not found in GFF file. Skipping.")
-        return None, None
+        # Return a non-None error message
+        return None, None, f"Warning: Target ID '{target_id}' not found in GFF file. Skipping."
+    
     target_info = gene_coords[target_id]
     contig_id = target_info['contig']
     
     if contig_id not in genome_records:
         core_contig_id = contig_id.split('|')[-1] if '|' in contig_id else contig_id
         if core_contig_id not in genome_records:
-             print(f"Warning: Contig '{contig_id}' (or '{core_contig_id}') for gene '{target_id}' not found in FASTA file. Skipping.")
-             return None, None
+             # Return a non-None error message
+             return None, None, f"Warning: Contig '{contig_id}' (or '{core_contig_id}') for gene '{target_id}' not found in FASTA file. Skipping."
         target_info['contig'] = core_contig_id
     
     contig_seq = genome_records[target_info['contig']].seq
     start, end = target_info['start'] - 1, target_info['end']
     target_seq = contig_seq[start:end]
-    return str(target_seq), target_info
+    # Return a None error message on success
+    return str(target_seq), target_info, None
 
 def design_primers_for_sequence(sequence, target_id):
     """Uses primer3-py to design primers for a given sequence."""
@@ -143,6 +145,64 @@ def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix):
         bedf.writelines(all_bed_rows)
     print(f"\nResults for {len(all_bed_rows)} specific targets saved to '{csv_file}' and '{bed_file}'")
 
+# --- THIS IS THE MISSING FUNCTION (BUG #2) ---
+def process_single_target(target_id, genome_records, gene_coords, blast_db):
+    """
+    This function contains all the work for designing and checking primers
+    for a SINGLE target. It's designed to be run in parallel.
+    """
+    # 1. Extract Sequence
+    target_sequence, target_info, error = extract_target_sequence(genome_records, gene_coords, target_id)
+    if not target_sequence:
+        return None, error # Return None and the error message
+
+    # 2. Design Primers
+    primer_results = design_primers_for_sequence(target_sequence, target_id)
+    num_returned = primer_results.get('PRIMER_PAIR_NUM_RETURNED', 0)
+    if num_returned == 0:
+        return None, f"Primer3 could not design any initial primers for {target_id}."
+
+    # 3. Check Specificity (Find first specific pair)
+    specific_pair_found = False
+    for i in range(num_returned):
+        fwd_seq = primer_results[f'PRIMER_LEFT_{i}_SEQUENCE']
+        rev_seq = primer_results[f'PRIMER_RIGHT_{i}_SEQUENCE']
+        
+        try:
+            fwd_hits = run_blast_specificity_check(fwd_seq, blast_db)
+            rev_hits = run_blast_specificity_check(rev_seq, blast_db)
+        except Exception as e:
+            return None, f"BLAST failed for {target_id}: {e}"
+
+        if fwd_hits == 1 and rev_hits == 1:
+            # 4. Apply Tailing Logic (if specific)
+            fwd_rc = str(Seq(fwd_seq).reverse_complement())
+            rev_rc = str(Seq(rev_seq).reverse_complement())
+
+            csv_row = {
+                'target_id': target_id, 'pair_rank': i, 'fwd_primer_seq': fwd_seq, 'rev_primer_seq': rev_seq,
+                'fwd_primer_tailed': FWD_TAIL + fwd_rc,
+                'rev_primer_tailed': REV_TAIL + rev_rc,
+                'fwd_primer_tm': f"{primer_results[f'PRIMER_LEFT_{i}_TM']:.2f}",
+                'rev_primer_tm': f"{primer_results[f'PRIMER_RIGHT_{i}_TM']:.2f}",
+                'amplicon_size': primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE'],
+                'specificity_hits': f"F:{fwd_hits}, R:{rev_hits}"
+            }
+            
+            product_size = primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE']
+            fwd_start_in_gene = primer_results[f'PRIMER_LEFT_{i}'][0]
+            amp_start = target_info['start'] - 1 + fwd_start_in_gene
+            amp_end = amp_start + product_size
+            bed_row = f"{target_info['contig']}\t{amp_start}\t{amp_end}\t{target_id}_amplicon_{i}\t0\t+\n"
+            
+            specific_pair_found = True
+            return {'csv_row': csv_row, 'bed_row': bed_row}, None # Return results and no error
+
+    if not specific_pair_found:
+        return None, f"Could not find a specific primer pair for {target_id} among the candidates."
+    
+    return None, None # Should not be reachable, but good practice
+
 def run_design_mode(args):
     """Runs the script in 'Full Design' mode."""
     print("Running in 'Full Design' mode...")
@@ -184,7 +244,8 @@ def run_design_mode(args):
                     failed_targets.append(error)
 
         # 5. Write outputs
-        write_output_files(all_csv_rows, all_bed_rows, args.output_prefix)
+        # --- THIS IS THE TYPO FIX (BUG #3) ---
+        write_design_output_files(all_csv_rows, all_bed_rows, args.output_prefix)
         
         if failed_targets:
             print("\n--- Failed Targets ---")
@@ -195,41 +256,6 @@ def run_design_mode(args):
         print(f"\nAn error occurred: {e}")
     except Exception as e:
         print(f"\nAn unexpected error occurred: {e}")
-
-# --- Main Execution Block (Router) ---
-
-def main():
-    parser = argparse.ArgumentParser(description="Design specific, adapter-tailed primers for multiple targets.")
-    
-    # Mode 1: Full Design
-    design_group = parser.add_argument_group('Mode 1: Full Design Pipeline')
-    design_group.add_argument('--genome', help="Path to the reference genome in FASTA format.")
-    design_group.add_argument('--gff', help="Path to a GFF file for gene coordinate lookups.")
-    design_group.add_argument('--target-file', help="Path to a text file with one target gene ID per line.")
-    design_group.add_argument('--blast-db', help="Prefix for the local BLAST database.")
-    
-    # Mode 2: Tail-Only
-    tail_group = parser.add_argument_group('Mode 2: Tail-Only Utility')
-    tail_group.add_argument('--tail-fwd-file', help="Path to a text file with one forward primer per line.")
-    tail_group.add_argument('--tail-rev-file', help="Path to a text file with one reverse primer per line.")
-    
-    # Shared arguments
-    parser.add_argument('--output-prefix', default='final_primers', help="Prefix for output files.")
-    
-    args = parser.parse_args()
-
-    # --- Route to the correct mode ---
-    if args.genome and args.gff and args.target_file and args.blast_db:
-        run_design_mode(args)
-    elif args.tail_fwd_file and args.tail_rev_file:
-        run_tail_only_mode(args)
-    else:
-        print("Error: You must provide the correct arguments for a mode.")
-        print("\nFor 'Full Design' mode, you MUST provide:")
-        print("  --genome, --gff, --target-file, and --blast-db")
-        print("\nFor 'Tail-Only' mode, you MUST provide:")
-        print("  --tail-fwd-file and --tail-rev-file")
-        parser.print_help()
 
 # --- Mode 2: Tail-Only Pipeline Functions ---
 
@@ -288,3 +314,41 @@ def run_tail_only_mode(args):
         
     write_tail_only_csv(all_csv_rows, args.output_prefix)
 
+# --- Main Execution Block (Router) ---
+
+def main():
+    parser = argparse.ArgumentParser(description="Design specific, adapter-tailed primers for multiple targets.")
+    
+    # Mode 1: Full Design
+    design_group = parser.add_argument_group('Mode 1: Full Design Pipeline')
+    design_group.add_argument('--genome', help="Path to the reference genome in FASTA format.")
+    design_group.add_argument('--gff', help="Path to a GFF file for gene coordinate lookups.")
+    design_group.add_argument('--target-file', help="Path to a text file with one target gene ID per line.")
+    design_group.add_argument('--blast-db', help="Prefix for the local BLAST database.")
+    
+    # Mode 2: Tail-Only
+    tail_group = parser.add_argument_group('Mode 2: Tail-Only Utility')
+    tail_group.add_argument('--tail-fwd-file', help="Path to a text file with one forward primer per line.")
+    tail_group.add_argument('--tail-rev-file', help="Path to a text file with one reverse primer per line.")
+    
+    # Shared arguments
+    parser.add_argument('--output-prefix', default='final_primers', help="Prefix for output files.")
+    
+    args = parser.parse_args()
+
+    # --- Route to the correct mode ---
+    if args.genome and args.gff and args.target_file and args.blast_db:
+        run_design_mode(args)
+    elif args.tail_fwd_file and args.tail_rev_file:
+        run_tail_only_mode(args)
+    else:
+        print("Error: You must provide the correct arguments for a mode.")
+        print("\nFor 'Full Design' mode, you MUST provide:")
+        print("  --genome, --gff, --target-file, and --blast-db")
+        print("\nFor 'Tail-Only' mode, you MUST provide:")
+        print("  --tail-fwd-file and --tail-rev-file")
+        parser.print_help()
+
+# --- THIS IS THE MISSING ENTRY POINT (BUG #1) ---
+if __name__ == "__main__":
+    main()
