@@ -22,8 +22,8 @@ It features two main modes of operation:
 ### 1. Clone the Repository
 
 ```bash
-git clone [https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git](https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git)
-cd YOUR_REPO_NAME
+git clone [https://github.com/AHumanBrain/primer_designer.git](https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git)
+cd primer_designer
 ```
 
 ### 2. Install NCBI BLAST+
