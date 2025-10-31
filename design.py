@@ -144,76 +144,92 @@ def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix):
     print(f"\nResults for {len(all_bed_rows)} specific targets saved to '{csv_file}' and '{bed_file}'")
 
 def run_design_mode(args):
-    """Runs the full primer design and specificity check pipeline."""
-    all_csv_rows, all_bed_rows = [], []
-    
-    create_blast_db_if_needed(args.genome, args.blast_db)
-    
-    cleaned_genome_path = f"{os.path.splitext(args.genome)[0]}.cleaned.fna"
-    print(f"Loading CLEANED genome from '{cleaned_genome_path}'...")
-    genome_records = SeqIO.to_dict(SeqIO.parse(cleaned_genome_path, "fasta"))
-    
-    print(f"Parsing GFF file '{args.gff}'...")
-    gene_coords = parse_gff(args.gff)
-    
-    print(f"Reading target IDs from '{args.target_file}'...")
-    target_ids = read_lines_from_file(args.target_file)
-    
-    for target_id in target_ids:
-        print(f"\n--- Processing target: {target_id} ---")
-        target_sequence, target_info = extract_target_sequence(genome_records, gene_coords, target_id)
-        if not target_sequence: continue
+    """Runs the script in 'Full Design' mode."""
+    print("Running in 'Full Design' mode...")
+    all_csv_rows, all_bed_rows, failed_targets = [], [], []
+
+    try:
+        # 1. Load shared data ONCE
+        create_blast_db_if_needed(args.genome, args.blast_db)
+        cleaned_genome_path = f"{os.path.splitext(args.genome)[0]}.cleaned.fna"
+        print(f"Loading CLEANED genome from '{cleaned_genome_path}'...")
+        genome_records = SeqIO.to_dict(SeqIO.parse(cleaned_genome_path, "fasta"))
+        print(f"Parsing GFF file '{args.gff}'...")
+        gene_coords = parse_gff(args.gff)
+        print(f"Reading target IDs from '{args.target_file}'...")
+        target_ids = read_lines_from_file(args.target_file)
+
+        # 2. Create a "partial" function that has the shared data "baked in"
+        process_func = partial(process_single_target,
+                               genome_records=genome_records,
+                               gene_coords=gene_coords,
+                               blast_db=args.blast_db)
+
+        # 3. Create a process pool and run the tasks in parallel
+        num_workers = os.cpu_count()
+        print(f"Starting parallel processing with {num_workers} workers for {len(target_ids)} targets...")
         
-        print("Designing candidate primers with Primer3...")
-        primer_results = design_primers_for_sequence(target_sequence, target_id)
-        num_returned = primer_results.get('PRIMER_PAIR_NUM_RETURNED', 0)
-        if num_returned == 0: 
-            print("Primer3 could not design any initial primers for this target.")
-            continue
+        results = []
+        # Use pool.imap_unordered for efficiency and tqdm for a progress bar
+        with multiprocessing.Pool(processes=num_workers) as pool:
+            results = list(tqdm(pool.imap_unordered(process_func, target_ids), total=len(target_ids), desc="Designing Primers"))
 
-        print(f"Found {num_returned} candidate pairs. Checking specificity with BLAST...")
-        specific_pair_found = False
-        for i in range(num_returned):
-            fwd_seq = primer_results[f'PRIMER_LEFT_{i}_SEQUENCE']
-            rev_seq = primer_results[f'PRIMER_RIGHT_{i}_SEQUENCE']
-            fwd_hits = run_blast_specificity_check(fwd_seq, args.blast_db)
-            rev_hits = run_blast_specificity_check(rev_seq, args.blast_db)
+        # 4. Collect results
+        for result, error in results:
+            if result:
+                all_csv_rows.append(result['csv_row'])
+                all_bed_rows.append(result['bed_row'])
+            else:
+                if error: # Only add if error is not None
+                    failed_targets.append(error)
 
-            if fwd_hits == 1 and rev_hits == 1:
-                print(f"  -> SUCCESS: Found specific pair (Rank {i}).")
-                
-                fwd_rc = str(Seq(fwd_seq).reverse_complement())
-                rev_rc = str(Seq(rev_seq).reverse_complement())
-                
-                fwd_tailed = fwd_rc + FWD_TAIL
-                rev_tailed = rev_rc + REV_TAIL
-
-                all_csv_rows.append({
-                    'target_id': target_id, 'pair_rank': i, 
-                    'fwd_primer_tailed': fwd_tailed,
-                    'rev_primer_tailed': rev_tailed,
-                    'fwd_primer_seq': fwd_seq, 
-                    'rev_primer_seq': rev_seq,
-                    'fwd_primer_tm': f"{primer_results[f'PRIMER_LEFT_{i}_TM']:.2f}",
-                    'rev_primer_tm': f"{primer_results[f'PRIMER_RIGHT_{i}_TM']:.2f}",
-                    'amplicon_size': primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE'],
-                    'specificity_hits': f"F:{fwd_hits}, R:{rev_hits}"
-                })
-                
-                product_size = primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE']
-                fwd_start_in_gene = primer_results[f'PRIMER_LEFT_{i}'][0]
-                amp_start = target_info['start'] - 1 + fwd_start_in_gene
-                amp_end = amp_start + product_size
-                bed_row = f"{target_info['contig']}\t{amp_start}\t{amp_end}\t{target_id}_amplicon_{i}\t0\t+\n"
-                all_bed_rows.append(bed_row)
-                
-                specific_pair_found = True
-                break 
+        # 5. Write outputs
+        write_output_files(all_csv_rows, all_bed_rows, args.output_prefix)
         
-        if not specific_pair_found:
-             print(f"  -> Could not find a specific primer pair for {target_id} among the candidates.")
+        if failed_targets:
+            print("\n--- Failed Targets ---")
+            for reason in failed_targets:
+                print(reason)
 
-    write_design_output_files(all_csv_rows, all_bed_rows, args.output_prefix)
+    except (FileNotFoundError, subprocess.CalledProcessError, RuntimeError, ValueError) as e:
+        print(f"\nAn error occurred: {e}")
+    except Exception as e:
+        print(f"\nAn unexpected error occurred: {e}")
+
+# --- Main Execution Block (Router) ---
+
+def main():
+    parser = argparse.ArgumentParser(description="Design specific, adapter-tailed primers for multiple targets.")
+    
+    # Mode 1: Full Design
+    design_group = parser.add_argument_group('Mode 1: Full Design Pipeline')
+    design_group.add_argument('--genome', help="Path to the reference genome in FASTA format.")
+    design_group.add_argument('--gff', help="Path to a GFF file for gene coordinate lookups.")
+    design_group.add_argument('--target-file', help="Path to a text file with one target gene ID per line.")
+    design_group.add_argument('--blast-db', help="Prefix for the local BLAST database.")
+    
+    # Mode 2: Tail-Only
+    tail_group = parser.add_argument_group('Mode 2: Tail-Only Utility')
+    tail_group.add_argument('--tail-fwd-file', help="Path to a text file with one forward primer per line.")
+    tail_group.add_argument('--tail-rev-file', help="Path to a text file with one reverse primer per line.")
+    
+    # Shared arguments
+    parser.add_argument('--output-prefix', default='final_primers', help="Prefix for output files.")
+    
+    args = parser.parse_args()
+
+    # --- Route to the correct mode ---
+    if args.genome and args.gff and args.target_file and args.blast_db:
+        run_design_mode(args)
+    elif args.tail_fwd_file and args.tail_rev_file:
+        run_tail_only_mode(args)
+    else:
+        print("Error: You must provide the correct arguments for a mode.")
+        print("\nFor 'Full Design' mode, you MUST provide:")
+        print("  --genome, --gff, --target-file, and --blast-db")
+        print("\nFor 'Tail-Only' mode, you MUST provide:")
+        print("  --tail-fwd-file and --tail-rev-file")
+        parser.print_help()
 
 # --- Mode 2: Tail-Only Pipeline Functions ---
 
@@ -271,47 +287,4 @@ def run_tail_only_mode(args):
         })
         
     write_tail_only_csv(all_csv_rows, args.output_prefix)
-
-# --- Main Execution "Router" ---
-
-def main():
-    parser = argparse.ArgumentParser(description="Design or tail multiplex PCR primers.")
-    
-    # --- Design Mode Arguments ---
-    parser.add_argument('--genome', help="Path to the reference genome in FASTA format.")
-    parser.add_argument('--gff', help="Path to a GFF file for gene coordinate lookups.")
-    parser.add_argument('--target-file', help="Path to a text file with one target gene ID per line.")
-    parser.add_argument('--blast-db', help="Prefix for the local BLAST database.")
-    
-    # --- Tail-Only Mode Arguments ---
-    parser.add_argument('--tail-fwd-file', help="Path to a file of forward primers (one per line).")
-    parser.add_argument('--tail-rev-file', help="Path to a file of reverse primers (one per line).")
-    
-    # --- Common Argument ---
-    parser.add_argument('--output-prefix', default='final_primers', help="Prefix for output files.")
-    
-    args = parser.parse_args()
-
-    try:
-        # Check which mode to run
-        if args.tail_fwd_file and args.tail_rev_file:
-            print("--- Running in Tail-Only Mode ---")
-            run_tail_only_mode(args)
-            
-        elif args.genome and args.gff and args.target_file and args.blast_db:
-            print("--- Running in Full Design Mode ---")
-            run_design_mode(args)
-            
-        else:
-            print("Error: You must provide arguments for either 'Design Mode' or 'Tail-Only Mode'.")
-            print("\nFor Design Mode, specify: --genome, --gff, --target-file, and --blast-db")
-            print("For Tail-Only Mode, specify: --tail-fwd-file and --tail-rev-file")
-
-    except (FileNotFoundError, subprocess.CalledProcessError, RuntimeError, ValueError) as e:
-        print(f"\nAn error occurred: {e}")
-    except Exception as e:
-        print(f"\nAn unexpected error occurred: {e}")
-
-if __name__ == "__main__":
-    main()
 
