@@ -7,6 +7,9 @@ import os
 import csv
 import subprocess
 import shutil
+import multiprocessing
+from functools import partial
+from tqdm import tqdm
 
 # --- Hardcoded Adapter Tails ---
 FWD_TAIL = 'AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT'
