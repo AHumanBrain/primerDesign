@@ -22,7 +22,7 @@ It features two main modes of operation:
 ### 1. Clone the Repository
 
 ```bash
-git clone [https://github.com/AHumanBrain/primer_designer.git](https://github.com/AHumanBrain/primer_designer.git)
+git clone https://github.com/AHumanBrain/primer_designer.git
 cd primer_designer
 ```
 
