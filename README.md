@@ -68,6 +68,18 @@ python .\design.py --genome "path\to\ecoli_genome.fna" ^
 * `--blast-db`: The desired prefix for your BLAST database (e.g., "ecoli\_db").
 * `--output-prefix`: The base name for your output files (e.g., `ecoli_run_1.csv` and `ecoli_run_1.bed`).
 
+### Understanding the Output CSV
+
+When you run the `design` mode, your output CSV will contain these important columns:
+
+* **`fwd_primer_seq` / `rev_primer_seq`**: The specific part of the primer that binds to your gene.
+
+* **`fwd_primer_tailed` / `rev_primer_tailed`**: The final, full primer sequence (with adapter tails) ready to be ordered.
+
+* **`pair_rank`**: This is the quality score from Primer3. It ranks potential pairs based on thermodynamics (ideal Tm, low self-dimer risk, etc.). `Rank 0` is the "best" pair Primer3 could find.
+
+* **`specificity_hits`**: This is the result from our custom BLAST check. It shows how many times the forward (`F:`) and reverse (`R:`) primers had a perfect match in the genome. `F:1, R:1` is the ideal result, meaning your primers are highly specific. The script automatically rejects non-specific pairs.
+
 ### Mode 2: Tail-Only Utility
 
 This mode skips all design and BLAST steps. It simply reads your primer lists, applies the hardcoded tailing logic, and saves the output.
