@@ -145,7 +145,6 @@ def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix):
         bedf.writelines(all_bed_rows)
     print(f"\nResults for {len(all_bed_rows)} specific targets saved to '{csv_file}' and '{bed_file}'")
 
-# --- THIS IS THE MISSING FUNCTION (BUG #2) ---
 def process_single_target(target_id, genome_records, gene_coords, blast_db):
     """
     This function contains all the work for designing and checking primers
@@ -181,8 +180,10 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db):
 
             csv_row = {
                 'target_id': target_id, 'pair_rank': i, 'fwd_primer_seq': fwd_seq, 'rev_primer_seq': rev_seq,
-                'fwd_primer_tailed': FWD_TAIL + fwd_rc,
-                'rev_primer_tailed': REV_TAIL + rev_rc,
+                # --- LOGIC FIX HERE ---
+                'fwd_primer_tailed': fwd_rc + FWD_TAIL,
+                'rev_primer_tailed': rev_rc + REV_TAIL,
+                # --- END FIX ---
                 'fwd_primer_tm': f"{primer_results[f'PRIMER_LEFT_{i}_TM']:.2f}",
                 'rev_primer_tm': f"{primer_results[f'PRIMER_RIGHT_{i}_TM']:.2f}",
                 'amplicon_size': primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE'],
@@ -244,7 +245,6 @@ def run_design_mode(args):
                     failed_targets.append(error)
 
         # 5. Write outputs
-        # --- THIS IS THE TYPO FIX (BUG #3) ---
         write_design_output_files(all_csv_rows, all_bed_rows, args.output_prefix)
         
         if failed_targets:
@@ -301,8 +301,10 @@ def run_tail_only_mode(args):
         fwd_rc = str(Seq(fwd_seq).reverse_complement())
         rev_rc = str(Seq(rev_seq).reverse_complement())
         
+        # --- LOGIC FIX HERE ---
         fwd_tailed = fwd_rc + FWD_TAIL
         rev_tailed = rev_rc + REV_TAIL
+        # --- END FIX ---
         
         all_csv_rows.append({
             'pair_id': f"pair_{i+1}",
@@ -332,7 +334,7 @@ def main():
     tail_group.add_argument('--tail-rev-file', help="Path to a text file with one reverse primer per line.")
     
     # Shared arguments
-    parser.add_argument('--output-prefix', default='final_primers', help="Prefix for output files.")
+    parser.add_argument('--output-prefix', default='final_ primers', help="Prefix for output files.")
     
     args = parser.parse_args()
 
@@ -349,6 +351,6 @@ def main():
         print("  --tail-fwd-file and --tail-rev-file")
         parser.print_help()
 
-# --- THIS IS THE MISSING ENTRY POINT (BUG #1) ---
 if __name__ == "__main__":
     main()
+
