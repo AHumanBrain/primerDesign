@@ -1,107 +1,153 @@
-# Multiplex PCR Primer Designer CLI
+# Multiplex PCR Primer Designer
 
-This is a command-line tool for designing specific, adapter-tailed primer pairs for multiplex PCR. The tool is built in Python and leverages `primer3-py` for primer design and a local NCBI BLAST+ installation for specificity checking.
+This is a command-line tool for designing multiplex-ready PCR primers. It provides a complete end-to-end workflow, from target selection to a final, validated set of primers with sequencing adapter tails.
 
-It features two main modes of operation:
-
-1.  **Full Design Mode:** An end-to-end pipeline that takes a genome and a list of target genes, designs specific primers, and adds sequencing adapter tails.
-2.  **Tail-Only Mode:** A utility to quickly add adapter tails to pre-existing lists of forward and reverse primers.
+The script is built to be robust, fast, and specific, using a combination of Primer3 for design, NCBI BLAST+ for specificity checking, and an "auto-healing" algorithm to resolve primer-dimer incompatibilities.
 
 ## Features
 
-* **Primer3 Integration:** Designs thermodynamically optimal primers based on your sequence.
-* **Automated Specificity Check:** Automatically runs each candidate primer pair against a local BLAST database and filters for pairs where both primers have exactly one perfect hit in the genome.
-* **Robust File Handling:** Automatically builds the required BLAST database from your genome, cleaning FASTA headers to prevent common errors.
-* **Custom Tailing Logic:** Hardcoded with specific adapter sequences, which are added to the **reverse complement** of the designed primers.
-* **Dual Output:**
-    * `.csv`: A detailed report with all specific primer pairs, their properties (Tm, size), and the final tailed sequences.
-    * `.bed`: A browser-ready file to visualize the location of your amplicons in a genome browser like IGV.
+* **Two Modes of Operation:**
+    1.  **Full Design Mode:** Designs, validates, and tails new primers from scratch for a list of gene targets.
+    2.  **Tail-Only Mode:** Bypasses design/validation and simply adds sequencing tails to a pre-designed list of primers.
+* **Intelligent Design Pipeline:**
+    * **Parallel Processing:** Uses all available CPU cores to process large primer panels in parallel.
+    * **Specificity Guarantee:** Uses a local NCBI BLAST database to ensure every primer pair binds *only* to its intended target.
+    * **Smart Retry:** Automatically tries multiple design strategies (e.g., different amplicon sizes, Tms) for challenging targets that fail on the first pass.
+* **Advanced Multiplex Validation:**
+    * **Cross-Compatibility Check:** Checks all primers in the final set against each other for potential primer-dimers ($\Delta G$).
+    * **Auto-Healing Algorithm:** If clashes are found, the script intelligently swaps out "problem" primers with the next-best specific alternatives and re-checks, attempting to find a fully compatible set.
+    * **Best-Available Set:** If a 100% perfect set can't be found, the script outputs the "best available" set (the one with the fewest clashes) along with a clear warning list.
+* **Automated Tailing:** Applies custom sequencing tails using reverse-complement logic, ready for ordering.
+* **Clear Outputs:** Generates a `.csv` file for analysis and a `.bed` file for visualizing amplicons in a genome browser like IGV.
 
-## Setup
+## Requirements
 
-### 1. Clone the Repository
+1.  **Python 3.7+**
+2.  **NCBI BLAST+** (must be installed and in your system's `PATH`)
+3.  **Python Libraries** (install with `pip install -r requirements.txt`):
+    * `biopython`
+    * `primer3-py`
+    * `tqdm`
 
-```bash
-git clone https://github.com/AHumanBrain/primer_designer.git
-cd primer_designer
+## `requirements.txt`
+
+```
+biopython
+primer3-py
+tqdm
 ```
 
-### 2. Install NCBI BLAST+
+## Initial Setup: Building the BLAST Database
 
-This tool **requires** a local installation of NCBI BLAST+.
+Before you can run the design pipeline, you must create a local BLAST database from your genome. The script can do this for you, but it's best to run it once to be sure.
 
-1.  **Download:** Get the installer from the [NCBI BLAST+ Download Page](https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/LATEST/). Choose the `x64-win64.exe` file.
-2.  **Install:** Run the installer. **Crucially, ensure you check the box that says "Add BLAST to the system PATH".**
-3.  **Verify:** Close and re-open your terminal/PowerShell. Type `blastn -version`. You should see a version number printed.
-
-### 3. Install Python Dependencies
-
-Make sure you are in the project's root directory (where `requirements.txt` is located).
+1.  Place your genome `your_genome.fna` in your project folder.
+2.  Run the `makeblastdb` command (part of BLAST+):
 
 ```powershell
-pip install -r requirements.txt
+makeblastdb -in "your_genome.fna" -dbtype nucl -out "your_blast_db_name" -parse_seqids
 ```
+
+*Note: The script also has a built-in function (`create_blast_db_if_needed`) that will try to do this automatically if it can't find the database, including cleaning FASTA headers that would otherwise cause `makeblastdb` to fail.*
 
 ## Usage
 
-The script operates in one of two modes, determined by the arguments you provide.
+The script operates in two distinct modes.
+
+---
 
 ### Mode 1: Full Design Pipeline
 
-This mode designs primers from scratch. It requires a genome, a gene annotation file, a target list, and a name for the BLAST database.
+This is the main workflow. You provide a genome, gene annotations, and a list of target genes, and the script generates a final, multiplex-compatible primer set.
 
-**Note:** The first time you run this command on a new genome, the script will automatically create the necessary BLAST database files (e..g, `ecoli_db.nin`, `ecoli_db.nhr`, etc.). This may take a few moments. Subsequent runs will be much faster as they will re-use the existing database.
-
-#### Example Command:
+**Example Command:**
 
 ```powershell
-python .\design.py --genome "path\to\ecoli_genome.fna" ^
-                  --gff "path\to\ecoli_annotations.gff" ^
-                  --target-file "path\to\my_targets.txt" ^
-                  --blast-db "ecoli_db" ^
-                  --output-prefix "ecoli_run_1"
+python .\design.py --genome "ecoli_genome.fna" `
+                  --gff "genomic.gff" `
+                  --target-file "target_genes.txt" `
+                  --blast-db "ecoli_db" `
+                  --output-prefix "ecoli_v3_final_run"
 ```
 
-* `--genome`: Path to your genome FASTA file.
-* `--gff`: Path to your gene annotation file (GFF/GFF3).
-* `--target-file`: A simple `.txt` file with one gene name (matching the GFF) per line.
-* `--blast-db`: The desired prefix for your BLAST database (e.g., "ecoli\_db").
-* `--output-prefix`: The base name for your output files (e.g., `ecoli_run_1.csv` and `ecoli_run_1.bed`).
+**Example `target_genes.txt`:**
 
-### Understanding the Output CSV
+```
+gyrA
+recA
+dnaA
+rpsL
+trpA
+ampC
+lacZ
+rpoB
+fliC
+dnaB
+```
 
-When you run the `design` mode, your output CSV will contain these important columns:
+**Example Output Log:**
 
-* **`fwd_primer_seq` / `rev_primer_seq`**: The specific part of the primer that binds to your gene.
+```
+Running in 'Full Design' mode...
+BLAST database 'ecoli_db' already exists. Skipping creation.
+Loading CLEANED genome from 'ecoli_genome.cleaned.fna'...
+Parsing GFF file 'genomic.gff'...
+Reading target IDs from 'target_genes.txt'...
+Starting parallel processing with 8 workers for 10 targets...
+Designing Primers: 100%|██████████| 10/10 [00:01<00:00, 6.41it/s]
 
-* **`fwd_primer_tailed` / `rev_primer_tailed`**: The final, full primer sequence (with adapter tails) ready to be ordered.
+--- Starting Multiplex Compatibility Check & Auto-Healing ---
+  -> Iteration 1: Found 22 clashes. Worst offender: rpoB (7 clashes).
+  -> Iteration 2: Found 19 clashes. Worst offender: recA (6 clashes).
+  ...
+  -> Iteration 49: Found 8 clashes. Worst offender: dnaA (3 clashes).
+  -> Iteration 50: Found 11 clashes. Worst offender: dnaA (6 clashes).
+Failed to find a perfect set after 50 iterations.
+Returning best available set with 8 potential clashes.
 
-* **`pair_rank`**: This is the quality score from Primer3. It ranks potential pairs based on thermodynamics (ideal Tm, low self-dimer risk, etc.). `Rank 0` is the "best" pair Primer3 could find.
+--- Final Compatibility Warnings ---
+  - Potential cross-dimer between ampC_R_1 (Strategy 0) and recA_R_2 (Strategy 0) (dG: -6.21)
+  - Potential cross-dimer between dnaA_F_0 (Strategy 0) and trpA_R_0 (Strategy 0) (dG: -6.21)
+  ... (6 more warnings) ...
 
-* **`specificity_hits`**: This is the result from our custom BLAST check. It shows how many times the forward (`F:`) and reverse (`R:`) primers had a perfect match in the genome. `F:1, R:1` is the ideal result, meaning your primers are highly specific. The script automatically rejects non-specific pairs.
+Results for 10 specific targets saved to 'ecoli_v3.1_autoheal_run.csv' and 'ecoli_v3.1_autoheal_run.bed'
+```
+
+---
 
 ### Mode 2: Tail-Only Utility
 
-This mode skips all design and BLAST steps. It simply reads your primer lists, applies the hardcoded tailing logic, and saves the output.
+Use this mode if you *already* have primer sequences and simply want to apply the hardcoded adapter tails. It bypasses all design, specificity, and compatibility checks.
 
-First, create your primer files (e.g., `my_fwd_primers.txt` and `my_rev_primers.txt`) with one primer sequence per line.
-
-#### Example Command:
+**Example Command:**
 
 ```powershell
-python .\design.py --tail-fwd-file "my_fwd_primers.txt" ^
-                  --tail-rev-file "my_rev_primers.txt" ^
-                  --output-prefix "my_tailed_primers"
+python .\design.py --tail-fwd-file "my_fwd_primers.txt" `
+                  --tail-rev-file "my_rev_primers.txt" `
+                  --output-prefix "tailed_primer_set"
 ```
 
-* `--tail-fwd-file`: Path to your file of forward primers.
-* `--tail-rev-file`: Path to your file of reverse primers.
-* `--output-prefix`: The base name for your output `.csv` file.
+**Example `my_fwd_primers.txt`:**
 
-## File Descriptions
+```
+GCTATCACCCAGTTTGATCG
+AACTCACTTCGGTCAGGTCG
+...
+```
 
-* `design.py`: The main Python script.
-* `requirements.txt`: A list of required Python libraries.
-* `.gitignore`: Standard Python gitignore file.
-* `README.md`: This file.
-        
+---
+
+### Understanding the Output CSV
+
+The main output file (`.csv`) contains the final primer set. Here are the key columns:
+
+* **`target_id`**: The gene name you provided.
+* **`pair_rank`**: The rank from Primer3. `0 (Strategy 0)` is the "best" primer pair from the default strategy. `1 (Strategy 2)` would be the *second-best* primer pair from the *third* (index 2) retry strategy.
+* **`fwd_primer_seq`**: The specific forward primer sequence.
+* **`rev_primer_seq`**: The specific reverse primer sequence.
+* **`fwd_primer_tailed`**: The final, ready-to-order sequence for the forward primer.
+* **`rev_primer_tailed`**: The final, ready-to-order sequence for the reverse primer.
+* **`fwd_primer_tm`**: Melting temperature of the specific forward primer.
+* **`rev_primer_tm`**: Melting temperature of the specific reverse primer.
+* **`amplicon_size`**: The length of the amplicon *before* tails are added.
+* **`specificity_hits`**: The result of the BLAST check. **`F:1, R:1`** is the ideal, meaning the forward primer and reverse primer each bind exactly once in the genome.
