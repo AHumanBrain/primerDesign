@@ -90,7 +90,7 @@ This is the main, fully-automated mode. It designs, validates, and tails primers
 **Required Arguments:**
 * `--genome`: Path to your reference genome (FASTA format).
 * `--gff`: Path to your gene annotation file (GFF format).
-* `--target-file`: Path to a simple `.txt` file with one gene symbol per line.
+* `--target-file`: Path to a simple `.txt` file with one gene symbol (e.g. gyrA, lacZ) per line.
 * `--blast-db`: A prefix for your BLAST database (e.g., "ecoli_db"). The script will automatically build this database from your genome if it doesn't exist.
 
 **Optional Arguments:**
