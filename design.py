@@ -16,6 +16,13 @@ from tqdm import tqdm
 FWD_TAIL = 'AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT'
 REV_TAIL = 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC'
 
+# --- Design Constants ---
+HAIRPIN_DG_THRESHOLD = -5.0  # (kcal/mol) More stable (more negative) than this is bad
+DIMER_DG_THRESHOLD = -6.0    # (kcal/mol)
+IDEAL_TM_MIN = 58.0
+IDEAL_TM_MAX = 62.0
+MAX_CLASH_RECOMMENDATION = 5 # (v4.0) Warn user if single-pool clashes exceed this
+
 # --- Core Helper Functions ---
 
 def read_lines_from_file(file_path):
@@ -132,14 +139,20 @@ def run_blast_specificity_check(primer_seq, blast_db_path):
     process = subprocess.run(command, input=f">primer\n{primer_seq}", capture_output=True, text=True, check=True)
     return len(process.stdout.strip().split('\n')) if process.stdout.strip() else 0
 
-def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix):
-    """Writes all collected primer data from the design mode to consolidated files."""
+def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix, final_warnings, failed_targets_initial):
+    """
+    Writes all collected primer data from the design mode to consolidated files.
+    (v3.4): Also writes a .log.txt file with all warnings.
+    """
     if not all_csv_rows:
         print("\nNo specific primers were successfully designed for any target.")
         return
+        
+    # --- Write CSV and BED Files ---
     csv_file, bed_file = f"{output_prefix}.csv", f"{output_prefix}.bed"
+    # --- MODIFICATION v4.0: Added 'flags' column ---
     csv_headers = [
-        'target_id', 'pair_rank', 
+        'target_id', 'pair_rank', 'flags',
         'fwd_primer_tailed', 'rev_primer_tailed',
         'fwd_primer_seq', 'rev_primer_seq',
         'fwd_primer_tm', 'rev_primer_tm', 
@@ -152,11 +165,31 @@ def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix):
     with open(bed_file, 'w') as bedf:
         bedf.writelines(all_bed_rows)
     print(f"\nResults for {len(all_bed_rows)} specific targets saved to '{csv_file}' and '{bed_file}'")
+    
+    # --- Write Log File ---
+    log_file = f"{output_prefix}.log.txt"
+    with open(log_file, 'w') as logf:
+        logf.write(f"--- Design Log for {output_prefix} ---\n\n")
+        
+        if final_warnings:
+            logf.write("--- Final Compatibility Warnings ---\n")
+            for warning in sorted(list(set(final_warnings))):
+                logf.write(f"  - {warning}\n")
+        
+        if failed_targets_initial:
+            logf.write("\n--- Targets That Failed Initial Design ---\n")
+            for reason in sorted(list(set(failed_targets_initial))):
+                logf.write(f"  - {reason}\n")
+                
+        if not final_warnings and not failed_targets_initial:
+            logf.write("Design complete. All targets were successful and compatible.\n")
+            
+    print(f"A detailed log of warnings has been saved to '{log_file}'")
 
 def process_single_target(target_id, genome_records, gene_coords, blast_db):
     """
-    This function contains all the work for designing and checking primers
-    for a SINGLE target. It finds ALL specific pairs across multiple strategies.
+    (v3.3) Finds ALL specific, non-hairpin pairs across multiple strategies.
+    (v4.0) Adds "flags" for non-ideal (but acceptable) primers.
     Returns: (target_id, list_of_primer_data_dicts, error_message_or_None)
     """
     # 1. Define Retry Strategies
@@ -170,7 +203,7 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db):
     # 2. Extract Sequence
     target_sequence, target_info, error = extract_target_sequence(genome_records, gene_coords, target_id)
     if not target_sequence:
-        return (target_id, [], error) # Return target_id, empty list, and error
+        return (target_id, [], error) 
 
     all_specific_pairs_for_target = []
 
@@ -179,103 +212,97 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db):
         primer_results = design_primers_for_sequence(target_sequence, target_id, strategy_settings)
         num_returned = primer_results.get('PRIMER_PAIR_NUM_RETURNED', 0)
         if num_returned == 0:
-            continue # Try next strategy
+            continue 
 
-        # 4. Check Specificity for all pairs in this batch
+        # 4. Check Specificity and Hairpin for all pairs
         for i in range(num_returned):
             fwd_seq = primer_results[f'PRIMER_LEFT_{i}_SEQUENCE']
             rev_seq = primer_results[f'PRIMER_RIGHT_{i}_SEQUENCE']
             
             try:
+                # 4a. Specificity Check
                 fwd_hits = run_blast_specificity_check(fwd_seq, blast_db)
                 rev_hits = run_blast_specificity_check(rev_seq, blast_db)
+                
+                if not (fwd_hits == 1 and rev_hits == 1):
+                    continue 
+                
+                # 4b. Hairpin Check
+                fwd_hairpin = primer3.calc_hairpin(fwd_seq)
+                rev_hairpin = primer3.calc_hairpin(rev_seq)
+                
+                fwd_hairpin_dg = fwd_hairpin.dg / 1000.0
+                rev_hairpin_dg = rev_hairpin.dg / 1000.0
+
+                if fwd_hairpin_dg < HAIRPIN_DG_THRESHOLD or rev_hairpin_dg < HAIRPIN_DG_THRESHOLD:
+                    continue 
+
             except Exception as e:
-                return (target_id, [], f"BLAST failed for {target_id}: {e}")
+                return (target_id, [], f"BLAST or Hairpin check failed for {target_id}: {e}")
 
-            if fwd_hits == 1 and rev_hits == 1:
-                # 5. Apply Tailing Logic (if specific)
-                fwd_rc = str(Seq(fwd_seq).reverse_complement())
-                rev_rc = str(Seq(rev_seq).reverse_complement())
-                pair_rank_str = f"{i} (Strategy {strategy_index})"
+            # 5. If it passes all checks, add flags and save
+            fwd_tm = primer_results[f'PRIMER_LEFT_{i}_TM']
+            rev_tm = primer_results[f'PRIMER_RIGHT_{i}_TM']
+            flags = []
+            if fwd_tm < IDEAL_TM_MIN or rev_tm < IDEAL_TM_MIN:
+                flags.append("Low_Tm")
+            if fwd_tm > IDEAL_TM_MAX or rev_tm > IDEAL_TM_MAX:
+                flags.append("High_Tm")
+            
+            fwd_rc = str(Seq(fwd_seq).reverse_complement())
+            rev_rc = str(Seq(rev_seq).reverse_complement())
+            pair_rank_str = f"{i} (Strategy {strategy_index})"
 
-                csv_row = {
-                    'target_id': target_id, 'pair_rank': pair_rank_str, 
-                    'fwd_primer_seq': fwd_seq, 'rev_primer_seq': rev_seq,
-                    'fwd_primer_tailed': fwd_rc + FWD_TAIL,
-                    'rev_primer_tailed': rev_rc + REV_TAIL,
-                    'fwd_primer_tm': f"{primer_results[f'PRIMER_LEFT_{i}_TM']:.2f}",
-                    'rev_primer_tm': f"{primer_results[f'PRIMER_RIGHT_{i}_TM']:.2f}",
-                    'amplicon_size': primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE'],
-                    'specificity_hits': f"F:{fwd_hits}, R:{rev_hits}"
-                }
-                
-                product_size = primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE']
-                fwd_start_in_gene = primer_results[f'PRIMER_LEFT_{i}'][0]
-                amp_start = target_info['start'] - 1 + fwd_start_in_gene
-                amp_end = amp_start + product_size
-                bed_row = f"{target_info['contig']}\t{amp_start}\t{amp_end}\t{target_id}_amplicon_{pair_rank_str}\t0\t+\n"
-                
-                all_specific_pairs_for_target.append({'csv_row': csv_row, 'bed_row': bed_row})
+            csv_row = {
+                'target_id': target_id, 'pair_rank': pair_rank_str, 
+                'flags': ";".join(flags) if flags else "OK", # (v4.0) Add flags
+                'fwd_primer_seq': fwd_seq, 'rev_primer_seq': rev_seq,
+                'fwd_primer_tailed': fwd_rc + FWD_TAIL,
+                'rev_primer_tailed': rev_rc + REV_TAIL,
+                'fwd_primer_tm': f"{fwd_tm:.2f}",
+                'rev_primer_tm': f"{rev_tm:.2f}",
+                'amplicon_size': primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE'],
+                'specificity_hits': f"F:{fwd_hits}, R:{rev_hits}"
+            }
+            
+            product_size = primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE']
+            fwd_start_in_gene = primer_results[f'PRIMER_LEFT_{i}'][0]
+            amp_start = target_info['start'] - 1 + fwd_start_in_gene
+            amp_end = amp_start + product_size
+            bed_row = f"{target_info['contig']}\t{amp_start}\t{amp_end}\t{target_id}_amplicon_{pair_rank_str}\t0\t+\n"
+            
+            all_specific_pairs_for_target.append({'csv_row': csv_row, 'bed_row': bed_row})
 
     if not all_specific_pairs_for_target:
-        return (target_id, [], f"Could not find a specific primer pair for {target_id} after all strategies.")
+        return (target_id, [], f"Could not find a specific, non-hairpin primer pair for {target_id} after all strategies.")
     
-    return (target_id, all_specific_pairs_for_target, None) # Return target_id, list of results, and no error
-
-def _check_pair_compatibility(p1_name, p1_seq, p2_name, p2_seq):
-    """Helper function to check a single pair for compatibility."""
-    # Define a single, conservative Delta G threshold (in kcal/mol).
-    DG_THRESHOLD = -6.0
-    
-    try:
-        # Check Heterodimer (cross-dimer)
-        result = primer3.calc_heterodimer(p1_seq, p2_seq)
-        # Fix: divide by 1000.0 to get kcal/mol
-        dg_val = result.dg / 1000.0
-        if dg_val < DG_THRESHOLD:
-            return (
-                f"Potential cross-dimer between {p1_name} and {p2_name} "
-                f"(dG: {dg_val:.2f})"
-            )
-    except Exception as e:
-        print(f"Warning: Could not calculate heterodimer for {p1_name}/{p2_name}. Error: {e}")
-    
-    return None
+    return (target_id, all_specific_pairs_for_target, None) 
 
 def find_compatible_set(target_to_primers_map, max_iterations=50):
     """
-    Attempts to find a compatible set of primers by iterating and
-    swapping out clashing pairs.
-    
-    NEW (v3.2): If a perfect set isn't found, it returns the "best available"
-    imperfect set (the one with the fewest clashes).
+    (v3.2) Attempts to find a compatible set of primers by iterating and
+    swapping out clashing pairs. Returns the "best available" imperfect set
+    if a perfect one isn't found.
     """
     print("\n--- Starting Multiplex Compatibility Check & Auto-Healing ---")
     
     if len(target_to_primers_map) < 2:
         print("Not enough targets for a multiplex check. Using best primers.")
-        # Just return the best primer for each target
         final_set = [primers[0] for primers in target_to_primers_map.values() if primers]
         return final_set, []
 
-    # 1. Initialize: Start with the "best" primer (index 0) for every target
     current_indices = {target: 0 for target in target_to_primers_map}
-    
-    # --- NEW v3.2 Logic ---
-    # Keep track of the best set found so far
     best_set_indices = current_indices.copy()
     min_clashes_found = float('inf')
     best_clash_list = []
-    # --- End NEW Logic ---
     
     for iteration in range(max_iterations):
         current_primer_set = [] # List of (primer_name, seq, target_id)
-        
-        # 2. Build the current set based on current_indices
         valid_set = True
+        
         for target_id, index in current_indices.items():
             if index >= len(target_to_primers_map[target_id]):
-                print(f"Error: Ran out of primer alternatives for {target_id} during iteration {iteration+1}.")
+                # Ran out of alternatives for this target
                 valid_set = False
                 break
             
@@ -288,47 +315,45 @@ def find_compatible_set(target_to_primers_map, max_iterations=50):
             current_primer_set.append((rev_name, csv_row['rev_primer_seq'], target_id))
         
         if not valid_set:
-            # We ran out of options for a target, so we can't continue this path.
-            # We must return the best set we've seen so far.
-            print(f"Stopping search. Returning best set found (with {min_clashes_found} clashes).")
+            # We ran out of options. Return the best set we found before this.
+            print(f"Stopping search (ran out of alternatives). Returning best set found (with {min_clashes_found} clashes).")
             final_set = [target_to_primers_map[t][i] for t, i in best_set_indices.items() if i < len(target_to_primers_map[t])]
             return final_set, best_clash_list
 
-        # 3. Check for clashes in the current set
         clashes = {} 
         all_incompatible_pairs = []
 
-        # Check for cross-dimers
         for (p1_name, p1_seq, p1_target), (p2_name, p2_seq, p2_target) in itertools.combinations(current_primer_set, 2):
             if p1_target == p2_target:
                 continue
-            error_msg = _check_pair_compatibility(p1_name, p1_seq, p2_name, p2_seq)
-            if error_msg:
-                all_incompatible_pairs.append(error_msg)
-                clashes[p1_target] = clashes.get(p1_target, 0) + 1
-                clashes[p2_target] = clashes.get(p2_target, 0) + 1
+            try:
+                result = primer3.calc_heterodimer(p1_seq, p2_seq)
+                dg_val = result.dg / 1000.0
+                if dg_val < DIMER_DG_THRESHOLD:
+                    error_msg = (f"Potential cross-dimer between {p1_name} and {p2_name} (dG: {dg_val:.2f})")
+                    all_incompatible_pairs.append(error_msg)
+                    clashes[p1_target] = clashes.get(p1_target, 0) + 1
+                    clashes[p2_target] = clashes.get(p2_target, 0) + 1
+            except Exception as e:
+                print(f"Warning: Could not calculate heterodimer for {p1_name}/{p2_name}. Error: {e}")
 
-        # 4. Check for Self-Dimers
         for name, seq, target_id in current_primer_set:
              try:
                 result = primer3.calc_homodimer(seq)
                 dg_val = result.dg / 1000.0
-                if dg_val < -6.0:
+                if dg_val < DIMER_DG_THRESHOLD:
                     error_msg = f"Potential self-dimer in {name} (dG: {dg_val:.2f})"
                     all_incompatible_pairs.append(error_msg)
                     clashes[target_id] = clashes.get(target_id, 0) + 1
              except Exception as e:
                 print(f"Warning: Could not calculate homodimer for {name}. Error: {e}")
 
-        # --- NEW v3.2 Logic ---
-        # 5. Evaluate and 'Heal' or Exit
         num_clashes = len(all_incompatible_pairs)
         
         if num_clashes < min_clashes_found:
             min_clashes_found = num_clashes
             best_set_indices = current_indices.copy()
             best_clash_list = all_incompatible_pairs
-        # --- End NEW Logic ---
 
         if not clashes:
             print(f"SUCCESS: Found a compatible set in {iteration + 1} iterations.")
@@ -340,15 +365,14 @@ def find_compatible_set(target_to_primers_map, max_iterations=50):
         
         current_indices[worst_target] += 1
         
-    # 6. If loop finishes, we failed. Return the BEST set we found.
     print(f"Failed to find a perfect set after {max_iterations} iterations.")
     print(f"Returning best available set with {min_clashes_found} potential clashes.")
     final_set = [target_to_primers_map[t][i] for t, i in best_set_indices.items() if i < len(target_to_primers_map[t])]
     return final_set, best_clash_list
 
 def run_design_mode(args):
-    """Runs the script in 'Full Design' mode."""
-    print("Running in 'Full Design' mode...")
+    """(v4.0) Runs the script in 'Full Design' mode, handling different design types."""
+    print(f"Running in 'Full Design' mode (Type: {args.design_type})...")
     failed_targets_initial = []
 
     try:
@@ -380,7 +404,9 @@ def run_design_mode(args):
         target_to_primers_map = {}
         for target_id, primer_list, error in results:
             if primer_list:
-                target_to_primers_map[target_id] = primer_list
+                # We sort the incoming primers by their rank string to ensure the "best" is first
+                sorted_list = sorted(primer_list, key=lambda x: x['csv_row']['pair_rank'])
+                target_to_primers_map[target_id] = sorted_list
             else:
                 if error: 
                     failed_targets_initial.append(error)
@@ -388,27 +414,63 @@ def run_design_mode(args):
         if not target_to_primers_map:
              print("\nNo specific primers were found for any target. Exiting.")
              return
-
-        # 5. Run the Auto-Healing Resolver
-        final_compatible_set, final_warnings = find_compatible_set(target_to_primers_map)
-
-        if final_warnings:
-            print("\n--- Final Compatibility Warnings ---")
-            for warning in sorted(list(set(final_warnings))): # Use set to remove duplicates
-                print(f"  - {warning}")
+             
+        # --- (v4.0) LOGIC FORK based on design-type ---
         
+        if args.design_type == 'sparse':
+            print("\nDesign Type 'sparse': Attempting to find a single compatible pool...")
+            final_compatible_set, final_warnings = find_compatible_set(target_to_primers_map)
+            
+            # (v4.0) Add recommendation
+            if len(final_warnings) > MAX_CLASH_RECOMMENDATION:
+                print("\n--- RECOMMENDATION ---")
+                print(f"Warning: Best set found has {len(final_warnings)} clashes (threshold is {MAX_CLASH_RECOMMENDATION}).")
+                print("This panel is at high risk of failure.")
+                print("Try re-running with '--design-type tiled' to auto-split into compatible pools.")
+                
+            if final_compatible_set:
+                final_csv_rows = [row['csv_row'] for row in final_compatible_set]
+                final_bed_rows = [row['bed_row'] for row in final_compatible_set]
+                write_design_output_files(final_csv_rows, final_bed_rows, args.output_prefix, final_warnings, failed_targets_initial)
+            else:
+                print("\nCould not determine a final compatible set. No files will be written.")
+
+        elif args.design_type == 'tiled':
+            print("\nDesign Type 'tiled': Splitting targets into two interleaved pools.")
+            
+            pool_A_targets = {}
+            pool_B_targets = {}
+            
+            # Sort targets by their order in the input file to ensure tiling is respected
+            for i, target_id in enumerate(target_ids):
+                if target_id in target_to_primers_map:
+                    if (i % 2) == 0:
+                        pool_A_targets[target_id] = target_to_primers_map[target_id]
+                    else:
+                        pool_B_targets[target_id] = target_to_primers_map[target_id]
+            
+            print(f"Created Pool A ({len(pool_A_targets)} targets) and Pool B ({len(pool_B_targets)} targets).")
+
+            # --- Process Pool A ---
+            if pool_A_targets:
+                pool_A_set, pool_A_warnings = find_compatible_set(pool_A_targets)
+                if pool_A_set:
+                    pool_A_csv = [row['csv_row'] for row in pool_A_set]
+                    pool_A_bed = [row['bed_row'] for row in pool_A_set]
+                    write_design_output_files(pool_A_csv, pool_A_bed, f"{args.output_prefix}_pool_A", pool_A_warnings, failed_targets_initial)
+            
+            # --- Process Pool B ---
+            if pool_B_targets:
+                pool_B_set, pool_B_warnings = find_compatible_set(pool_B_targets)
+                if pool_B_set:
+                    pool_B_csv = [row['csv_row'] for row in pool_B_set]
+                    pool_B_bed = [row['bed_row'] for row in pool_B_set]
+                    write_design_output_files(pool_B_csv, pool_B_bed, f"{args.output_prefix}_pool_B", pool_B_warnings, failed_targets_initial)
+
         if failed_targets_initial:
             print("\n--- Targets That Failed Initial Design ---")
-            for reason in sorted(list(set(failed_targets_initial))): # Use set to remove duplicates
+            for reason in sorted(list(set(failed_targets_initial))):
                 print(f"  - {reason}")
-
-        # 6. Write final files
-        if final_compatible_set:
-            final_csv_rows = [row['csv_row'] for row in final_compatible_set]
-            final_bed_rows = [row['bed_row'] for row in final_compatible_set]
-            write_design_output_files(final_csv_rows, final_bed_rows, args.output_prefix)
-        else:
-            print("\nCould not determine a final compatible set. No files will be written.")
 
     except (FileNotFoundError, subprocess.CalledProcessError, RuntimeError, ValueError) as e:
         print(f"\nAn error occurred: {e}")
@@ -480,10 +542,13 @@ def main():
     
     # Mode 1: Full Design
     design_group = parser.add_argument_group('Mode 1: Full Design Pipeline')
-    design_group.add_argument('--genome', help="Path to the reference genome in FASTA format.")
-    design_group.add_argument('--gff', help="Path to a GFF file for gene coordinate lookups.")
-    design_group.add_argument('--target-file', help="Path to a text file with one target gene ID per line.")
-    design_group.add_argument('--blast-db', help="Prefix for the local BLAST database.")
+    design_group.add_argument('--genome', required=True, help="Path to the reference genome in FASTA format.")
+    design_group.add_argument('--gff', required=True, help="Path to a GFF file for gene coordinate lookups.")
+    design_group.add_argument('--target-file', required=True, help="Path to a text file with one target gene ID per line.")
+    design_group.add_argument('--blast-db', required=True, help="Prefix for the local BLAST database.")
+    # --- MODIFICATION v4.0: Added design_type ---
+    design_group.add_argument('--design-type', required=True, choices=['sparse', 'tiled'], 
+                              help="Specify the design strategy: 'sparse' (for single-pool) or 'tiled' (for interleaved multi-pool).")
     
     # Mode 2: Tail-Only
     tail_group = parser.add_argument_group('Mode 2: Tail-Only Utility')
@@ -496,14 +561,14 @@ def main():
     args = parser.parse_args()
 
     # --- Route to the correct mode ---
-    if args.genome and args.gff and args.target_file and args.blast_db:
+    if args.genome and args.gff and args.target_file and args.blast_db and args.design_type:
         run_design_mode(args)
     elif args.tail_fwd_file and args.tail_rev_file:
         run_tail_only_mode(args)
     else:
         print("Error: You must provide the correct arguments for a mode.")
         print("\nFor 'Full Design' mode, you MUST provide:")
-        print("  --genome, --gff, --target-file, and --blast-db")
+        print("  --genome, --gff, --target-file, --blast-db, and --design-type")
         print("\nFor 'Tail-Only' mode, you MUST provide:")
         print("  --tail-fwd-file and --tail-rev-file")
         parser.print_help()
