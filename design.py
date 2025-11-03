@@ -17,8 +17,9 @@ FWD_TAIL = 'AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT'
 REV_TAIL = 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC'
 
 # --- Design Constants ---
-HAIRPIN_DG_THRESHOLD = -5.0  # (kcal/mol) More stable (more negative) than this is bad
-DIMER_DG_THRESHOLD = -6.0    # (kcal/mol)
+END_STABILITY_DG_THRESHOLD = -9.0  # (kcal/mol) More stable (more negative) than this is bad for a 3' extendable interaction
+# HAIRPIN_DG_THRESHOLD = -5.0  # (kcal/mol) DEPRECATED: Replaced by 3' end stability
+# DIMER_DG_THRESHOLD = -8.0    # (kcal/mol) DEPRECATED: Replaced by 3' end stability
 IDEAL_TM_MIN = 58.0
 IDEAL_TM_MAX = 62.0
 MAX_CLASH_RECOMMENDATION = 5 # Warn user if single-pool clashes exceed this
@@ -172,13 +173,18 @@ def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix, final_w
         
         if final_warnings:
             logf.write("--- Final Compatibility Warnings ---\n")
-            for warning in sorted(list(set(final_warnings))):
-                logf.write(f"  - {warning}\n")
+            # final_warnings is now a list of (msg, dg) tuples. Sort by dG (item [1]).
+            try:
+                sorted_warnings = sorted(list(set(final_warnings)), key=lambda x: x[1])
+            except TypeError:
+                sorted_warnings = final_warnings # Fallback if data is not as expected
+            for warning_msg, dg_val in sorted_warnings:
+                logf.write(f"   - {warning_msg}\n")
         
         if failed_targets_initial:
             logf.write("\n--- Targets That Failed Initial Design ---\n")
             for reason in sorted(list(set(failed_targets_initial))):
-                logf.write(f"  - {reason}\n")
+                logf.write(f"   - {reason}\n")
                 
         if not final_warnings and not failed_targets_initial:
             logf.write("Design complete. All targets were successful and compatible.\n")
@@ -226,15 +232,21 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db):
                 if not (fwd_hits == 1 and rev_hits == 1):
                     continue 
                 
-                # 4b. Hairpin Check
-                fwd_hairpin = primer3.calc_hairpin(fwd_seq)
-                rev_hairpin = primer3.calc_hairpin(rev_seq)
+                # 4b. 3' End Stability Check (covers hairpins, self-dimers, and fwd-rev dimers)
+                # This is a comprehensive pre-filter for all "self-interactions"
                 
-                fwd_hairpin_dg = fwd_hairpin.dg / 1000.0
-                rev_hairpin_dg = rev_hairpin.dg / 1000.0
+                # Check 3' extendable self-dimer / hairpin
+                fwd_self_dg = primer3.calc_end_stability(fwd_seq, fwd_seq).dg / 1000.0
+                rev_self_dg = primer3.calc_end_stability(rev_seq, rev_seq).dg / 1000.0
+                
+                # Check 3' extendable cross-dimer (fwd vs rev of the *same* pair)
+                fwd_rev_dg1 = primer3.calc_end_stability(fwd_seq, rev_seq).dg / 1000.0
+                fwd_rev_dg2 = primer3.calc_end_stability(rev_seq, fwd_seq).dg / 1000.0
+                
+                worst_self_interaction_dg = min(fwd_self_dg, rev_self_dg, fwd_rev_dg1, fwd_rev_dg2)
 
-                if fwd_hairpin_dg < HAIRPIN_DG_THRESHOLD or rev_hairpin_dg < HAIRPIN_DG_THRESHOLD:
-                    continue 
+                if worst_self_interaction_dg < END_STABILITY_DG_THRESHOLD:
+                    continue # Fails 3' stability pre-filtering
 
             except Exception as e:
                 return (target_id, [], f"BLAST or Hairpin check failed for {target_id}: {e}")
@@ -318,39 +330,36 @@ def find_compatible_set(target_to_primers_map, pool_name, max_iterations=50):
             return final_set, best_clash_list
 
         clashes = {} 
-        all_incompatible_pairs = []
+        all_clashes = [] # List of (msg, dg_val) tuples
 
         for (p1_name, p1_seq, p1_target), (p2_name, p2_seq, p2_target) in itertools.combinations(current_primer_set, 2):
             if p1_target == p2_target:
                 continue
             try:
-                result = primer3.calc_heterodimer(p1_seq, p2_seq)
-                dg_val = result.dg / 1000.0
-                if dg_val < DIMER_DG_THRESHOLD:
-                    error_msg = (f"Potential cross-dimer between {p1_name} and {p2_name} (dG: {dg_val:.2f})")
-                    all_incompatible_pairs.append(error_msg)
+                # "Smart" 3' End Stability check for hetero-dimers
+                dg1_on_2 = primer3.calc_end_stability(p1_seq, p2_seq).dg / 1000.0
+                dg2_on_1 = primer3.calc_end_stability(p2_seq, p1_seq).dg / 1000.0
+                dg_val = min(dg1_on_2, dg2_on_1)
+                
+                if dg_val < END_STABILITY_DG_THRESHOLD:
+                    error_msg = (f"Potential 3' cross-dimer between {p1_name} and {p2_name} (dG: {dg_val:.2f})")
+                    all_clashes.append((error_msg, dg_val))
                     clashes[p1_target] = clashes.get(p1_target, 0) + 1
                     clashes[p2_target] = clashes.get(p2_target, 0) + 1
             except Exception as e:
-                print(f"Warning: Could not calculate heterodimer for {p1_name}/{p2_name}. Error: {e}")
+                print(f"Warning: Could not calculate 3' end stability for {p1_name}/{p2_name}. Error: {e}")
 
-        for name, seq, target_id in current_primer_set:
-             try:
-                result = primer3.calc_homodimer(seq)
-                dg_val = result.dg / 1000.0
-                if dg_val < DIMER_DG_THRESHOLD:
-                    error_msg = f"Potential self-dimer in {name} (dG: {dg_val:.2f})"
-                    all_incompatible_pairs.append(error_msg)
-                    clashes[target_id] = clashes.get(target_id, 0) + 1
-             except Exception as e:
-                print(f"Warning: Could not calculate homodimer for {name}. Error: {e}")
+        # (v3_smart_pools) The 'calc_homodimer' check is now redundant.
+        # A more comprehensive 3' end stability check (for hairpins, self-dimers, 
+        # and fwd-rev dimers) is now performed in `process_single_target`
+        # as a pre-filtering step.
 
-        num_clashes = len(all_incompatible_pairs)
+        num_clashes = len(all_clashes)
         
         if num_clashes < min_clashes_found:
             min_clashes_found = num_clashes
             best_set_indices = current_indices.copy()
-            best_clash_list = all_incompatible_pairs
+            best_clash_list = all_clashes # This now holds (msg, dg) tuples
 
         if not clashes:
             print(f"SUCCESS: Found a compatible set for {pool_name} in {iteration + 1} iterations.")
@@ -360,16 +369,25 @@ def find_compatible_set(target_to_primers_map, pool_name, max_iterations=50):
         worst_target = max(clashes, key=clashes.get)
         # Only print the iteration log if it's not a single-pool run
         if pool_name == "Single_Pool": 
-            print(f"  -> {pool_name} Iteration {iteration+1}: Found {num_clashes} clashes. Worst offender: {worst_target} ({clashes[worst_target]} clashes).")
+            print(f"   -> {pool_name} Iteration {iteration+1}: Found {num_clashes} clashes. Worst offender: {worst_target} ({clashes[worst_target]} clashes).")
         
         current_indices[worst_target] += 1
         
     print(f"Failed to find a perfect set for {pool_name} after {max_iterations} iterations.")
-    if pool_name == "Single_Pool":
-        print(f"Returning best available set for {pool_name} with {min_clashes_found} potential clashes.")
+    
+    # (v3_smart_pools) Provide more info about the best-available imperfect set
+    worst_dg = 0.0
+    if best_clash_list: # Check if the list is not empty
+        try:
+            worst_dg = min(dg for msg, dg in best_clash_list)
+        except (ValueError, TypeError):
+            worst_dg = 0.0 # Handle case where list might be malformed
+            
+    if pool_name == "Single_Pool" or min_clashes_found > 0:
+        print(f"Returning best available set for {pool_name} with {min_clashes_found} potential clashes (worst 3' dG: {worst_dg:.2f} kcal/mol).")
         
     final_set = [target_to_primers_map[t][i] for t, i in best_set_indices.items() if i < len(target_to_primers_map[t])]
-    return final_set, best_clash_list
+    return final_set, best_clash_list # best_clash_list is now a list of (msg, dg) tuples
 
 # --- NEW (v4.3) Helper function ---
 def check_amplicon_overlap(best_primer_pairs):
@@ -454,7 +472,7 @@ def run_design_mode(args):
         best_primer_pairs = []
         for target_id in target_ids:
              if target_id in target_to_primers_map:
-                best_primer_pairs.append(target_to_primers_map[target_id][0]) # Get [0] (best)
+                 best_primer_pairs.append(target_to_primers_map[target_id][0]) # Get [0] (best)
         
         overlap_detected = check_amplicon_overlap(best_primer_pairs)
         
@@ -501,48 +519,52 @@ def run_design_mode(args):
                     if not pool_targets:
                         continue
                     
-                    pool_set, pool_warnings = find_compatible_set(pool_targets, pool_name)
+                    pool_set, pool_clash_data = find_compatible_set(pool_targets, pool_name) # This is now a list of (msg, dg) tuples
                     
-                    if pool_warnings: 
+                    if pool_clash_data: 
                         all_pools_succeeded = False
-                        print(f"Failed to find a perfect 0-clash set for {pool_name} (found {len(pool_warnings)} clashes).")
+                        worst_dg = 0.0
+                        try:
+                            worst_dg = min(dg for msg, dg in pool_clash_data)
+                        except (ValueError, TypeError): pass
+                        print(f"Failed to find a perfect 0-clash set for {pool_name} (found {len(pool_clash_data)} clashes, worst 3' dG: {worst_dg:.2f} kcal/mol).")
                         print("Trying with N+1 pools...")
                         break 
                     
-                    all_pools_data.append((pool_set, pool_warnings, pool_name))
+                    all_pools_data.append((pool_set, pool_clash_data, pool_name)) # Pass on the new clash data structure
                 
                 if all_pools_succeeded:
                     print(f"\nSUCCESS: Found a perfect solution with {num_pools} pools.")
-                    for pool_set, pool_warnings, pool_name in all_pools_data:
+                    for pool_set, pool_clash_data, pool_name in all_pools_data:
                         pool_csv = [row['csv_row'] for row in pool_set]
                         pool_bed = [row['bed_row'] for row in pool_set]
-                        write_design_output_files(pool_csv, pool_bed, f"{args.output_prefix}_{pool_name}", pool_warnings, failed_targets_initial if pool_name == "pool_1" else [])
+                        write_design_output_files(pool_csv, pool_bed, f"{args.output_prefix}_{pool_name}", pool_clash_data, failed_targets_initial if pool_name == "pool_1" else [])
                     break 
             
             if not all_pools_succeeded:
-                 print("\nFATAL: Could not find a perfect N-pool solution, even with N=len(targets).")
+                  print("\nFATAL: Could not find a perfect N-pool solution, even with N=len(targets).")
 
         else:
             # Run the v3.2 "best-imperfect-set" logic for a single pool
             print("\nDesign Strategy: Attempting to find a single compatible pool (forced)...")
-            final_compatible_set, final_warnings = find_compatible_set(target_to_primers_map, "Single_Pool")
+            final_compatible_set, final_clash_data = find_compatible_set(target_to_primers_map, "Single_Pool")
             
-            if len(final_warnings) > MAX_CLASH_RECOMMENDATION:
+            if len(final_clash_data) > MAX_CLASH_RECOMMENDATION:
                 print("\n--- RECOMMENDATION ---")
-                print(f"Warning: Best set found has {len(final_warnings)} clashes (threshold is {MAX_CLASH_RECOMMENDATION}).")
+                print(f"Warning: Best set found has {len(final_clash_data)} clashes (threshold is {MAX_CLASH_RECOMMENDATION}).")
                 print("This panel is at high risk of failure.")
                 
             if final_compatible_set:
                 final_csv_rows = [row['csv_row'] for row in final_compatible_set]
                 final_bed_rows = [row['bed_row'] for row in final_compatible_set]
-                write_design_output_files(final_csv_rows, final_bed_rows, args.output_prefix, final_warnings, failed_targets_initial)
+                write_design_output_files(final_csv_rows, final_bed_rows, args.output_prefix, final_clash_data, failed_targets_initial)
             else:
                 print("\nCould not determine a final compatible set. No files will be written.")
 
         if failed_targets_initial:
             print("\n--- Targets That Failed Initial Design (All Pools) ---")
             for reason in sorted(list(set(failed_targets_initial))):
-                print(f"  - {reason}")
+                print(f"   - {reason}")
 
     except (FileNotFoundError, subprocess.CalledProcessError, RuntimeError, ValueError) as e:
         print(f"\nAn error occurred: {e}")
@@ -579,8 +601,8 @@ def run_tail_only_mode(args):
     
     if len(fwd_primers) != len(rev_primers):
         print("\nWarning: The number of forward and reverse primers does not match.")
-        print(f"  Forward primers found: {len(fwd_primers)}")
-        print(f"  Reverse primers found: {len(rev_primers)}")
+        print(f"   Forward primers found: {len(fwd_primers)}")
+        print(f"   Reverse primers found: {len(rev_primers)}")
         print("Processing the minimum number of pairs.")
     
     all_csv_rows = []
@@ -640,11 +662,10 @@ def main():
     else:
         print("Error: You must provide the correct arguments for a mode.")
         print("\nFor 'Full Design' mode, you MUST provide:")
-        print("  --genome, --gff, --target-file, and --blast-db")
+        print("   --genome, --gff, --target-file, and --blast-db")
         print("\nFor 'Tail-Only' mode, you MUST provide:")
-        print("  --tail-fwd-file and --tail-rev-file")
+        print("   --tail-fwd-file and --tail-rev-file")
         parser.print_help()
 
 if __name__ == "__main__":
     main()
-
