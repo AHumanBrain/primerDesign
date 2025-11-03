@@ -1,6 +1,3 @@
-Grant-Ready Protocol Copier
-The text box below contains the raw Markdown for the protocol. Use the button to copy it.
-
 # Protocol: High-Plex Amplicon Library Preparation for NGS
 
 ## I. Summary
@@ -121,6 +118,3 @@ This protocol is a starting point. For novel panels, optimization is required to
 * **Betaine:** For high-GC panels (per the design log), add 1M Betaine to the Stage 1 PCR to improve the amplification of GC-rich, "knotted" targets.
 * **SPRI Bead Ratio:** The 0.8X ratio is designed to cut off fragments <100bp. This ratio may need to be adjusted based on the observed size of primer-dimers.
 * **Primer Pool Balancing:** For final optimization, use sequencing coverage data to "re-balance" the primer pool. Increase the concentration of primers for low-coverage amplicons and decrease the concentration for high-coverage amplicons.
-
-        
- Copy Raw Markdown to Clipboard
