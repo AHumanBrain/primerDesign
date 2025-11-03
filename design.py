@@ -21,7 +21,7 @@ HAIRPIN_DG_THRESHOLD = -5.0  # (kcal/mol) More stable (more negative) than this 
 DIMER_DG_THRESHOLD = -6.0    # (kcal/mol)
 IDEAL_TM_MIN = 58.0
 IDEAL_TM_MAX = 62.0
-MAX_CLASH_RECOMMENDATION = 5 # (v4.0) Warn user if single-pool clashes exceed this
+MAX_CLASH_RECOMMENDATION = 5 # Warn user if single-pool clashes exceed this
 
 # --- Core Helper Functions ---
 
@@ -145,12 +145,11 @@ def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix, final_w
     (v3.4): Also writes a .log.txt file with all warnings.
     """
     if not all_csv_rows:
-        print("\nNo specific primers were successfully designed for any target.")
+        print(f"\nNo specific primers were successfully designed for '{output_prefix}'.")
         return
         
     # --- Write CSV and BED Files ---
     csv_file, bed_file = f"{output_prefix}.csv", f"{output_prefix}.bed"
-    # --- MODIFICATION v4.0: Added 'flags' column ---
     csv_headers = [
         'target_id', 'pair_rank', 'flags',
         'fwd_primer_tailed', 'rev_primer_tailed',
@@ -278,16 +277,16 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db):
     
     return (target_id, all_specific_pairs_for_target, None) 
 
-def find_compatible_set(target_to_primers_map, max_iterations=50):
+def find_compatible_set(target_to_primers_map, pool_name, max_iterations=50):
     """
     (v3.2) Attempts to find a compatible set of primers by iterating and
     swapping out clashing pairs. Returns the "best available" imperfect set
     if a perfect one isn't found.
     """
-    print("\n--- Starting Multiplex Compatibility Check & Auto-Healing ---")
+    print(f"\n--- Starting Compatibility Check & Auto-Healing for {pool_name} ---")
     
     if len(target_to_primers_map) < 2:
-        print("Not enough targets for a multiplex check. Using best primers.")
+        print(f"Not enough targets in {pool_name} for a multiplex check. Using best primers.")
         final_set = [primers[0] for primers in target_to_primers_map.values() if primers]
         return final_set, []
 
@@ -302,7 +301,6 @@ def find_compatible_set(target_to_primers_map, max_iterations=50):
         
         for target_id, index in current_indices.items():
             if index >= len(target_to_primers_map[target_id]):
-                # Ran out of alternatives for this target
                 valid_set = False
                 break
             
@@ -315,8 +313,7 @@ def find_compatible_set(target_to_primers_map, max_iterations=50):
             current_primer_set.append((rev_name, csv_row['rev_primer_seq'], target_id))
         
         if not valid_set:
-            # We ran out of options. Return the best set we found before this.
-            print(f"Stopping search (ran out of alternatives). Returning best set found (with {min_clashes_found} clashes).")
+            print(f"Stopping search for {pool_name} (ran out of alternatives).")
             final_set = [target_to_primers_map[t][i] for t, i in best_set_indices.items() if i < len(target_to_primers_map[t])]
             return final_set, best_clash_list
 
@@ -356,23 +353,59 @@ def find_compatible_set(target_to_primers_map, max_iterations=50):
             best_clash_list = all_incompatible_pairs
 
         if not clashes:
-            print(f"SUCCESS: Found a compatible set in {iteration + 1} iterations.")
+            print(f"SUCCESS: Found a compatible set for {pool_name} in {iteration + 1} iterations.")
             final_set = [target_to_primers_map[t][i] for t, i in current_indices.items()]
             return final_set, []
         
         worst_target = max(clashes, key=clashes.get)
-        print(f"  -> Iteration {iteration+1}: Found {num_clashes} clashes. Worst offender: {worst_target} ({clashes[worst_target]} clashes).")
+        # Only print the iteration log if it's not a single-pool run
+        if pool_name == "Single_Pool": 
+            print(f"  -> {pool_name} Iteration {iteration+1}: Found {num_clashes} clashes. Worst offender: {worst_target} ({clashes[worst_target]} clashes).")
         
         current_indices[worst_target] += 1
         
-    print(f"Failed to find a perfect set after {max_iterations} iterations.")
-    print(f"Returning best available set with {min_clashes_found} potential clashes.")
+    print(f"Failed to find a perfect set for {pool_name} after {max_iterations} iterations.")
+    if pool_name == "Single_Pool":
+        print(f"Returning best available set for {pool_name} with {min_clashes_found} potential clashes.")
+        
     final_set = [target_to_primers_map[t][i] for t, i in best_set_indices.items() if i < len(target_to_primers_map[t])]
     return final_set, best_clash_list
 
+# --- NEW (v4.3) Helper function ---
+def check_amplicon_overlap(best_primer_pairs):
+    """Checks if any of the 'best' amplicons in a set overlap."""
+    amplicons_by_contig = {}
+    
+    # 1. Parse BED rows and store coordinates by contig
+    for pair_data in best_primer_pairs:
+        bed_row = pair_data['bed_row'].strip().split('\t')
+        contig, start, end = bed_row[0], int(bed_row[1]), int(bed_row[2])
+        
+        if contig not in amplicons_by_contig:
+            amplicons_by_contig[contig] = []
+        amplicons_by_contig[contig].append((start, end))
+        
+    # 2. Check for overlaps on each contig
+    for contig, coords in amplicons_by_contig.items():
+        if len(coords) < 2:
+            continue
+        
+        # Sort by start position
+        sorted_coords = sorted(coords, key=lambda x: x[0])
+        
+        # Compare each amplicon to the next one
+        for i in range(len(sorted_coords) - 1):
+            current_end = sorted_coords[i][1]
+            next_start = sorted_coords[i+1][0]
+            
+            if current_end > next_start: # Overlap!
+                return True # Found an overlap
+                
+    return False # No overlaps found
+
 def run_design_mode(args):
-    """(v4.0) Runs the script in 'Full Design' mode, handling different design types."""
-    print(f"Running in 'Full Design' mode (Type: {args.design_type})...")
+    """(v4.3) Runs the script in 'Full Design' mode, now with auto-detection of design type."""
+    print("Running in 'Full Design' mode...")
     failed_targets_initial = []
 
     try:
@@ -415,18 +448,89 @@ def run_design_mode(args):
              print("\nNo specific primers were found for any target. Exiting.")
              return
              
-        # --- (v4.0) LOGIC FORK based on design-type ---
+        # --- (v4.3) NEW "Meta-Pipeline" LOGIC FORK ---
         
-        if args.design_type == 'sparse':
-            print("\nDesign Type 'sparse': Attempting to find a single compatible pool...")
-            final_compatible_set, final_warnings = find_compatible_set(target_to_primers_map)
+        # 5. Check for overlaps in the BEST set of primers
+        best_primer_pairs = []
+        for target_id in target_ids:
+             if target_id in target_to_primers_map:
+                best_primer_pairs.append(target_to_primers_map[target_id][0]) # Get [0] (best)
+        
+        overlap_detected = check_amplicon_overlap(best_primer_pairs)
+        
+        # 6. Decide which strategy to use
+        
+        # We MUST run N-pooling if amplicons are tiled/overlapping
+        if overlap_detected:
+            print("\nOverlap detected between amplicons. This is a 'tiled' design.")
+            print("Forcing interleaved multi-pool design to prevent on-target cross-priming.")
+            run_minimum_pool_logic = True
+        
+        # If they are sparse, we check the user's flag
+        else:
+            print("\nAmplicons are 'sparse' (non-overlapping).")
+            if args.force_single_pool:
+                print("User specified '--force-single-pool'. Attempting to find best-available single set.")
+                run_minimum_pool_logic = False
+            else:
+                print("Defaulting to safest method: finding minimum number of compatible pools.")
+                run_minimum_pool_logic = True
+        
+        # ---
+        
+        if run_minimum_pool_logic:
+            # Run the v4.2 "find minimum N-pools" logic
+            print("\nDesign Strategy: Searching for the minimum number of compatible pools...")
             
-            # (v4.0) Add recommendation
+            for num_pools in range(1, len(target_ids) + 1):
+                print(f"\n--- Testing N = {num_pools} {'pool' if num_pools == 1 else 'pools'} ---")
+                
+                pools = [{} for _ in range(num_pools)]
+                for i, target_id in enumerate(target_ids):
+                    if target_id in target_to_primers_map:
+                        pool_index = i % num_pools
+                        pools[pool_index][target_id] = target_to_primers_map[target_id]
+                
+                print(f"Splitting into {num_pools} pools with {[len(p) for p in pools]} targets each.")
+
+                all_pools_succeeded = True
+                all_pools_data = [] 
+                
+                for i, pool_targets in enumerate(pools):
+                    pool_name = f"pool_{i+1}"
+                    if not pool_targets:
+                        continue
+                    
+                    pool_set, pool_warnings = find_compatible_set(pool_targets, pool_name)
+                    
+                    if pool_warnings: 
+                        all_pools_succeeded = False
+                        print(f"Failed to find a perfect 0-clash set for {pool_name} (found {len(pool_warnings)} clashes).")
+                        print("Trying with N+1 pools...")
+                        break 
+                    
+                    all_pools_data.append((pool_set, pool_warnings, pool_name))
+                
+                if all_pools_succeeded:
+                    print(f"\nSUCCESS: Found a perfect solution with {num_pools} pools.")
+                    for pool_set, pool_warnings, pool_name in all_pools_data:
+                        pool_csv = [row['csv_row'] for row in pool_set]
+                        pool_bed = [row['bed_row'] for row in pool_set]
+                        write_design_output_files(pool_csv, pool_bed, f"{args.output_prefix}_{pool_name}", pool_warnings, failed_targets_initial if pool_name == "pool_1" else [])
+                    break 
+            
+            if not all_pools_succeeded:
+                 print("\nFATAL: Could not find a perfect N-pool solution, even with N=len(targets).")
+
+        else:
+            # Run the v3.2 "best-imperfect-set" logic for a single pool
+            print("\nDesign Strategy: Attempting to find a single compatible pool (forced)...")
+            final_compatible_set, final_warnings = find_compatible_set(target_to_primers_map, "Single_Pool")
+            
             if len(final_warnings) > MAX_CLASH_RECOMMENDATION:
                 print("\n--- RECOMMENDATION ---")
                 print(f"Warning: Best set found has {len(final_warnings)} clashes (threshold is {MAX_CLASH_RECOMMENDATION}).")
                 print("This panel is at high risk of failure.")
-                print("Try re-running with '--design-type tiled' to auto-split into compatible pools.")
                 
             if final_compatible_set:
                 final_csv_rows = [row['csv_row'] for row in final_compatible_set]
@@ -435,40 +539,8 @@ def run_design_mode(args):
             else:
                 print("\nCould not determine a final compatible set. No files will be written.")
 
-        elif args.design_type == 'tiled':
-            print("\nDesign Type 'tiled': Splitting targets into two interleaved pools.")
-            
-            pool_A_targets = {}
-            pool_B_targets = {}
-            
-            # Sort targets by their order in the input file to ensure tiling is respected
-            for i, target_id in enumerate(target_ids):
-                if target_id in target_to_primers_map:
-                    if (i % 2) == 0:
-                        pool_A_targets[target_id] = target_to_primers_map[target_id]
-                    else:
-                        pool_B_targets[target_id] = target_to_primers_map[target_id]
-            
-            print(f"Created Pool A ({len(pool_A_targets)} targets) and Pool B ({len(pool_B_targets)} targets).")
-
-            # --- Process Pool A ---
-            if pool_A_targets:
-                pool_A_set, pool_A_warnings = find_compatible_set(pool_A_targets)
-                if pool_A_set:
-                    pool_A_csv = [row['csv_row'] for row in pool_A_set]
-                    pool_A_bed = [row['bed_row'] for row in pool_A_set]
-                    write_design_output_files(pool_A_csv, pool_A_bed, f"{args.output_prefix}_pool_A", pool_A_warnings, failed_targets_initial)
-            
-            # --- Process Pool B ---
-            if pool_B_targets:
-                pool_B_set, pool_B_warnings = find_compatible_set(pool_B_targets)
-                if pool_B_set:
-                    pool_B_csv = [row['csv_row'] for row in pool_B_set]
-                    pool_B_bed = [row['bed_row'] for row in pool_B_set]
-                    write_design_output_files(pool_B_csv, pool_B_bed, f"{args.output_prefix}_pool_B", pool_B_warnings, failed_targets_initial)
-
         if failed_targets_initial:
-            print("\n--- Targets That Failed Initial Design ---")
+            print("\n--- Targets That Failed Initial Design (All Pools) ---")
             for reason in sorted(list(set(failed_targets_initial))):
                 print(f"  - {reason}")
 
@@ -546,9 +618,9 @@ def main():
     design_group.add_argument('--gff', required=True, help="Path to a GFF file for gene coordinate lookups.")
     design_group.add_argument('--target-file', required=True, help="Path to a text file with one target gene ID per line.")
     design_group.add_argument('--blast-db', required=True, help="Prefix for the local BLAST database.")
-    # --- MODIFICATION v4.0: Added design_type ---
-    design_group.add_argument('--design-type', required=True, choices=['sparse', 'tiled'], 
-                              help="Specify the design strategy: 'sparse' (for single-pool) or 'tiled' (for interleaved multi-pool).")
+    # --- MODIFICATION v4.3 ---
+    design_group.add_argument('--force-single-pool', action='store_true',
+                              help="Force the script to find the 'best-available' single pool (default: finds minimum N-pools).")
     
     # Mode 2: Tail-Only
     tail_group = parser.add_argument_group('Mode 2: Tail-Only Utility')
@@ -561,14 +633,14 @@ def main():
     args = parser.parse_args()
 
     # --- Route to the correct mode ---
-    if args.genome and args.gff and args.target_file and args.blast_db and args.design_type:
+    if args.genome and args.gff and args.target_file and args.blast_db:
         run_design_mode(args)
     elif args.tail_fwd_file and args.tail_rev_file:
         run_tail_only_mode(args)
     else:
         print("Error: You must provide the correct arguments for a mode.")
         print("\nFor 'Full Design' mode, you MUST provide:")
-        print("  --genome, --gff, --target-file, --blast-db, and --design-type")
+        print("  --genome, --gff, --target-file, and --blast-db")
         print("\nFor 'Tail-Only' mode, you MUST provide:")
         print("  --tail-fwd-file and --tail-rev-file")
         parser.print_help()
