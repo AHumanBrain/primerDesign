@@ -88,8 +88,6 @@ graph TD
     J --> Q(End)
     M --> Q
     P --> Q
-
-
 ```
 
 ## Usage
@@ -122,8 +120,6 @@ This is the safest, most robust command. The script will auto-detect if your amp
 
 ```
 python .\design.py --genome "ecoli_genome.fna" --gff "genomic.gff" --target-file "target_genes.txt" --blast-db "ecoli_db" --output-prefix "ecoli_auto_pool_run"
-
-
 ```
 
 * **Output:** Will be `ecoli_auto_pool_run_pool_1.csv`, `..._pool_2.csv`, etc. With the new v5.0 logic, it is highly likely you will only get a single (`..._pool_1.csv`) file for sparse designs.
@@ -134,8 +130,6 @@ This command forces the script to produce a single-tube solution, *only if* the 
 
 ```
 python .\design.py --genome "ecoli_genome.fna" --gff "genomic.gff" --target-file "target_genes.txt" --blast-db "ecoli_db" --force-single-pool --output-prefix "ecoli_single_pool_run"
-
-
 ```
 
 * **Output:** A single set of files (`.csv`, `.bed`, `.log.txt`). The `.log.txt` will list any clashes it could not resolve. If the design is detected as `tiled`, this flag will be ignored and it will auto-pool anyway.
@@ -148,8 +142,6 @@ This mode bypasses all design and validation. It simply takes existing primer li
 
 ```
 python .\design.py --tail-fwd-file "my_fwd_primers.txt" --tail-rev-file "my_rev_primers.txt" --output-prefix "my_tailed_primers"
-
-
 ```
 
 ## Understanding the Output
