@@ -56,8 +56,8 @@ The script's automated decision-making follows this path:
 
 ```mermaid
 graph TD
-    A[Start: Run design.py] --> B{Run Parallel Design (v2.1)};
-    B --> C{Find all specific, hairpin-free<br>primer options for all targets};
+    A[Start: Run design.py] --> B[Run Parallel Design (v2.1)];
+    B --> C["Find all specific, hairpin-free<br>primer options for all targets"];
     C --> D{Check if 'best' amplicons overlap};
     D -- Yes (Tiled) --> E[Force Auto-N-Pool Logic];
     D -- No (Sparse) --> F{Check --force-single-pool flag};
@@ -70,14 +70,11 @@ graph TD
     K --> L{Auto-Healer finds<br>0-clash set for ALL pools?};
     L -- Yes --> M[SUCCESS: Save N=2 files];
     L -- No --> N[Start N=3...];
-    N --> O[...etc...];
+    N --> O[...]
     G --> P[Save 'best-available' single pool<br>(may have clashes)];
     J --> Q[End];
     M --> Q;
     P --> Q;
-```
-
----
 
 ## Usage
 
