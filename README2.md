@@ -82,23 +82,23 @@ The script's automated decision-making follows this path:
 
 ```mermaid
 graph TD
-    A[Start: Run design.py] --> B[Run Parallel Design v2.1]
-    B --> C["Find all specific, hairpin-free<br>primer options for all targets"]
+    A[Start: Run design.py] --> B(Run Parallel Design v2.1)
+    B --> C("Find all specific, hairpin-free<br>primer options for all targets")
     C --> D{Check if 'best' amplicons overlap}
-    D -- Yes, Tiled --> E[Force Auto-N-Pool Logic]
+    D -- Yes, Tiled --> E(Force Auto-N-Pool Logic)
     D -- No, Sparse --> F{Check --force-single-pool flag}
-    F -- True, User wants 1 tube --> G[Run 'Best-Imperfect-Set' v3.2]
-    F -- False, Default --> E[Run Auto-N-Pool Logic v4.2]
-    E --> H[Start N=1 (Test 1 pool)]
+    F -- True, User wants 1 tube --> G(Run 'Best-Imperfect-Set' v3.2)
+    F -- False, Default --> E(Run Auto-N-Pool Logic v4.2)
+    E --> H(Start N=1 - Test 1 pool)
     H --> I{Auto-Healer finds<br>0-clash set?}
-    I -- Yes --> J[SUCCESS: Save N=1 files]
-    I -- No --> K[Start N=2 (Test 2 pools)]
+    I -- Yes --> J(SUCCESS: Save N=1 files)
+    I -- No --> K(Start N=2 - Test 2 pools)
     K --> L{Auto-Healer finds<br>0-clash set for ALL pools?}
-    L -- Yes --> M[SUCCESS: Save N=2 files]
-    L -- No --> N[Start N=3...]
-    N --> O[...]
-    G --> P[Save 'best-available' single pool<br>(may have clashes)]
-    J --> Q[End]
+    L -- Yes --> M(SUCCESS: Save N=2 files)
+    L -- No --> N(Start N=3...)
+    N --> O(...)
+    G --> P(Save 'best-available' single pool<br>(may have clashes))
+    J --> Q(End)
     M --> Q
     P --> Q
 ```
@@ -173,8 +173,3 @@ This is your main result file. Key columns include:
 **3. The `.log.txt` File (The "Traceability Log")**
 * This file contains a complete record of the design process. It lists all targets that failed the initial design and, most importantly, provides the full list of all potential dimer clashes that the "Auto-Healing" logic had to resolve.
 * Use this to cross-reference with your sequencing data to troubleshoot failed amplicons.
-
-        </textarea>
-        
-        <button id="copyButton" class="mt-4 w-full bg-blue-600 text-white font-bold py
-
