@@ -90,7 +90,7 @@ This is the main, fully-automated mode. It designs, validates, and tails primers
 **Required Arguments:**
 * `--genome`: Path to your reference genome (FASTA format).
 * `--gff`: Path to your gene annotation file (GFF format).
-* `--target-file`: Path to a simple `.txt` file with one gene name per line.
+* `--target-file`: Path to a simple `.txt` file with one gene symbol per line.
 * `--blast-db`: A prefix for your BLAST database (e.g., "ecoli_db"). The script will automatically build this database from your genome if it doesn't exist.
 
 **Optional Arguments:**
@@ -133,7 +133,7 @@ The script generates three files for each design or pool:
 
 **1. The `.csv` File (The "Order Sheet")**
 This is your main result file. Key columns include:
-* **`target_id`**: The gene name for this primer pair.
+* **`target_id`**: The gene symbol for this primer pair.
 * **`pair_rank`**: The Primer3 quality score (e.g., `0 (Strategy 0)` is the best primer from the default strategy).
 * **`flags`**: **(IMPORTANT)** A direct instruction for lab-bench optimization. A `Low_Tm` or `High_Tm` flag suggests you may need to adjust this primer pair's concentration in your final pool. `OK` means it passed all ideal checks.
 * **`fwd_primer_seq` / `rev_primer_seq`**: The 20-mer target-specific sequence.
