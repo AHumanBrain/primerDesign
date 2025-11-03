@@ -74,7 +74,7 @@ graph TD
     G --> P[Save 'best-available' single pool<br>(may have clashes)]
     J --> Q[End]
     M --> Q
-    P --> Q
+    P --> Q'''
 
 ## Usage
 
