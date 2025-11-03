@@ -1,29 +1,3 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>README Copier (v4.3 - Complete)</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        /* Ensure textarea respects markdown formatting for copying */
-        textarea { 
-            white-space: pre; 
-            overflow-wrap: normal; 
-            overflow-x: scroll; 
-            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-            font-size: 0.875rem;
-            line-height: 1.25rem;
-        }
-    </style>
-</head>
-<body class="bg-slate-100 p-4 md:p-8">
-    <div class="max-w-4xl mx-auto bg-white p-6 md:p-8 rounded-lg shadow-lg">
-        <h1 class="text-2xl font-bold text-slate-800">Updated README.md (v4.3 - Complete)</h1>
-        <p class="text-slate-600 mt-2">The text box below contains the **complete** raw Markdown for your project's README. Use the button to copy the *entire* contents to your clipboard, then paste it directly into your `README.md` file on GitHub.</p>
-        
-        <textarea id="readmeText" class="w-full h-96 mt-4 p-3 border border-slate-300 rounded-md bg-slate-50" readonly>
 # Multiplex PCR Primer Designer (v4.3)
 
 This is a powerful, fully-automated command-line tool for designing robust, multiplex-ready PCR primer panels for amplicon-based next-generation sequencing.
@@ -149,53 +123,4 @@ This mode bypasses all design and validation. It simply takes existing primer li
 **Example Command:**
 ```powershell
 python .\design.py --tail-fwd-file "my_fwd_primers.txt" --tail-rev-file "my_rev_primers.txt" --output-prefix "my_tailed_primers"
-```
-
----
-
-## Understanding the Output
-
-The script generates three files for each design or pool:
-
-**1. The `.csv` File (The "Order Sheet")**
-This is your main result file. Key columns include:
-* **`target_id`**: The gene name for this primer pair.
-* **`pair_rank`**: The Primer3 quality score (e.g., `0 (Strategy 0)` is the best primer from the default strategy).
-* **`flags`**: **(IMPORTANT)** A direct instruction for lab-bench optimization. A `Low_Tm` or `High_Tm` flag suggests you may need to adjust this primer pair's concentration in your final pool. `OK` means it passed all ideal checks.
-* **`fwd_primer_seq` / `rev_primer_seq`**: The 20-mer target-specific sequence.
-* **`fwd_primer_tailed` / `rev_primer_tailed`**: The final, 50mer+ sequence (reverse-complemented and tailed), ready to be ordered.
-* **`fwd_primer_tm` / `rev_primer_tm`**: The $T_m$ of the *target-specific* sequence.
-* **`specificity_hits`**: The BLAST result. `F:1, R:1` is the ideal.
-
-**2. The `.bed` File (The "Visual Check")**
-* This is a standard genomics file. Load your reference genome (`.fna`) into a genome browser (like **IGV**), then load this `.bed` file to visually confirm your amplicons are in the correct locations.
-
-**3. The `.log.txt` File (The "Traceability Log")**
-* This file contains a complete record of the design process. It lists all targets that failed the initial design and, most importantly, provides the full list of all potential dimer clashes that the "Auto-Healing" logic had to resolve.
-* Use this to cross-reference with your sequencing data to troubleshoot failed amplicons.
-
-        </textarea>
-        
-        <button id="copyButton" class="mt-4 w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all text-lg">
-            Copy Raw Markdown to Clipboard
-        </button>
-    </div>
-
-    <script>
-        document.getElementById('copyButton').addEventListener('click', function() {
-            const textArea = document.getElementById('protocolText');
-            const textToCopy = textArea.value;
-
-            // Use the fallback method (document.execCommand) for compatibility
-            try {
-                textArea.select();
-                document.execCommand('copy');
-                this.textContent = 'Copied!';
-                this.classList.remove('bg-blue-600', 'hover:bg-blue-700');
-                this.classList.add('bg-green-600');
-                
-                setTimeout(() => {
-                    this.textContent = 'Copy Raw Markdown to Clipboard';
-                    this.classList.remove('bg-green-600');
-                    this.
 
