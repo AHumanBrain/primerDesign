@@ -56,7 +56,7 @@ The script's automated decision-making follows this path:
 
 ```mermaid
 graph TD
-    A[Start: Run design.py] --> B[Run Parallel Design (v2.1)]
+    A[Start: Run design.py] --> B[DOUBLECIRCLEEND: Run Parallel Design (v2.1)]
     B --> C["Find all specific, hairpin-free<br>primer options for all targets"]
     C --> D{Check if 'best' amplicons overlap}
     D -- Yes (Tiled) --> E[Force Auto-N-Pool Logic]
@@ -74,7 +74,7 @@ graph TD
     G --> P[Save 'best-available' single pool<br>(may have clashes)]
     J --> Q[End]
     M --> Q
-    P --> Q'''
+    P --> Q
 
 ## Usage
 
