@@ -69,7 +69,7 @@ This tool requires the BLAST+ command-line tools to be installed on your system.
 
 The script's automated decision-making follows this path:
 
-```
+```mermaid
 graph TD
     A[Start: Run design.py] --> B(Run Parallel Design v2.1)
     B --> C["Find all specific, 3'-end-stable<br>primer options for all targets"]
