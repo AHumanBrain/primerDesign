@@ -55,26 +55,29 @@ This tool requires the BLAST+ command-line tools to be installed on your system.
 The script's automated decision-making follows this path:
 
 ```mermaid
-graph TD
-    A[Start: Run design.py] --> B[Run Parallel Design (v2.1)]
-    B --> C["Find all specific, hairpin-free<br>primer options for all targets"]
-    C --> D{Check if 'best' amplicons overlap}
-    D -- Yes (Tiled) --> E[Force Auto-N-Pool Logic]
-    D -- No (Sparse) --> F{Check --force-single-pool flag}
-    F -- True (User wants 1 tube) --> G[Run 'Best-Imperfect-Set' (v3.2)]
-    F -- False (Default, wants performance) --> E[Run Auto-N-Pool Logic (v4.2)]
-    E --> H[Start N=1 (Test 1 pool)]
-    H --> I{Auto-Healer finds<br>0-clash set?}
-    I -- Yes --> J[SUCCESS: Save N=1 files]
-    I -- No --> K[Start N=2 (Test 2 pools)]
-    K --> L{Auto-Healer finds<br>0-clash set for ALL pools?}
-    L -- Yes --> M[SUCCESS: Save N=2 files]
-    L -- No --> N[Start N=3...]
-    N --> O[...]
-    G --> P[Save 'best-available' single pool<br>(may have clashes)]
-    J --> Q[End]
-    M --> Q
-    P --> Q
+graph TD;
+    A[Start: Run design.py] --> B[Run Parallel Design v2.1];
+    B --> C["Find all specific, hairpin-free<br>primer options for all targets"];
+    C --> D{Check if 'best' amplicons overlap};
+    D -- Yes, Tiled --> E[Force Auto-N-Pool Logic];
+    D -- No, Sparse --> F{Check --force-single-pool flag};
+    F -- True, User wants 1 tube --> G[Run 'Best-Imperfect-Set' v3.2];
+    F -- False, Default --> E[Run Auto-N-Pool Logic v4.2];
+    E --> H[Start N=1 (Test 1 pool)];
+    H --> I{Auto-Healer finds<br>0-clash set?};
+    I -- Yes --> J[SUCCESS: Save N=1 files];
+    I -- No --> K[Start N=2 (Test 2 pools)];
+    K --> L{Auto-Healer finds<br>0-clash set for ALL pools?};
+    L -- Yes --> M[SUCCESS: Save N=2 files];
+    L -- No --> N[Start N=3...];
+    N --> O[...];
+    G --> P[Save 'best-available' single pool<br>(may have clashes)];
+    J --> Q[End];
+    M --> Q;
+    P --> Q;
+```
+
+---
 
 ## Usage
 
@@ -91,7 +94,7 @@ This is the main, fully-automated mode. It designs, validates, and tails primers
 * `--blast-db`: A prefix for your BLAST database (e.g., "ecoli_db"). The script will automatically build this database from your genome if it doesn't exist.
 
 **Optional Arguments:**
-* `--force-single-pool`: (Flag) If provided, it will force the script to find the "best-available" set for a single tube, even if it has clashes.
+* `--force-single-pool`: (Flag) If provided, it will force the script to find the "best-available" set for a single tube, even if it has clashes. This is only used for `sparse` (non-overlapping) designs.
 * `--output-prefix`: (Default: `final_primers`) A prefix for your output files.
 
 
@@ -101,15 +104,15 @@ This is the safest, most robust command. The script will auto-detect if your amp
 ```powershell
 python .\design.py --genome "ecoli_genome.fna" --gff "genomic.gff" --target-file "target_genes.txt" --blast-db "ecoli_db" --output-prefix "ecoli_auto_pool_run"
 ```
-* **Output:** Will be `ecoli_auto_pool_run_pool_1.csv`, `..._pool_2.csv`, etc. If a perfect single pool is possible, it will only output one set of files.
+* **Output:** Will be `ecoli_auto_pool_run_pool_1.csv`, `..._pool_2.csv`, etc. If a perfect single pool is possible, it will only output one set of files (`..._pool_1.csv`).
 
 #### Example 2: The "Forced Single-Pool" Run
-This command forces the script to produce a single-tube solution, even if it's imperfect.
+This command forces the script to produce a single-tube solution, *only if* the design is sparse (non-tiled).
 
 ```powershell
 python .\design.py --genome "ecoli_genome.fna" --gff "genomic.gff" --target-file "target_genes.txt" --blast-db "ecoli_db" --force-single-pool --output-prefix "ecoli_single_pool_run"
 ```
-* **Output:** A single set of files (`.csv`, `.bed`, `.log.txt`). The `.log.txt` will list any clashes it could not resolve.
+* **Output:** A single set of files (`.csv`, `.bed`, `.log.txt`). The `.log.txt` will list any clashes it could not resolve. If the design is detected as `tiled`, this flag will be ignored and it will auto-pool anyway.
 
 ---
 
