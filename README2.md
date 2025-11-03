@@ -1,29 +1,3 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>README Copier (v4.3 - FINAL FIX 2)</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        /* Ensure textarea respects markdown formatting for copying */
-        textarea { 
-            white-space: pre; 
-            overflow-wrap: normal; 
-            overflow-x: scroll; 
-            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-            font-size: 0.875rem;
-            line-height: 1.25rem;
-        }
-    </style>
-</head>
-<body class="bg-slate-100 p-4 md:p-8">
-    <div class="max-w-4xl mx-auto bg-white p-6 md:p-8 rounded-lg shadow-lg">
-        <h1 class="text-2xl font-bold text-slate-800">Updated README.md (v4.3 - FINAL FIX 2)</h1>
-        <p class="text-slate-600 mt-2">The text box below contains the **complete and corrected** raw Markdown for your project's README. Use the button to copy the *entire* contents to your clipboard, then paste it directly into your `README.md` file on GitHub.</p>
-        
-        <textarea id="readmeText" class="w-full h-96 mt-4 p-3 border border-slate-300 rounded-md bg-slate-50" readonly>
 # Multiplex PCR Primer Designer (v4.3)
 
 This is a powerful, fully-automated command-line tool for designing robust, multiplex-ready PCR primer panels for amplicon-based next-generation sequencing.
