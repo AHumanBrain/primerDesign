@@ -114,7 +114,10 @@ def extract_target_sequence(genome_records, gene_coords, target_id):
     return str(target_seq), target_info, None
 
 def design_primers_for_sequence(sequence, target_id, strategy_settings):
-    """Uses primer3-py to design primers for a given sequence."""
+    """
+    Uses primer3-py to design primers for a given sequence.
+    (This function is now restored to its original, clean version)
+    """
     seq_args = {'SEQUENCE_ID': target_id, 'SEQUENCE_TEMPLATE': sequence}
     
     # Start with default global settings
@@ -129,6 +132,9 @@ def design_primers_for_sequence(sequence, target_id, strategy_settings):
     # Apply strategy-specific settings, overriding defaults
     global_args.update(strategy_settings)
     
+    # We let primer3 handle the error if it occurs, but it will be
+    # caught by the `process_single_target` function's try/except block.
+    # The new pre-check in `process_single_target` will prevent most errors.
     return primer3.design_primers(seq_args, global_args)
 
 def run_blast_specificity_check(primer_seq, blast_db_path):
@@ -195,6 +201,7 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db):
     """
     (v3.3) Finds ALL specific, non-hairpin pairs across multiple strategies.
     (v4.0) Adds "flags" for non-ideal (but acceptable) primers.
+    (v5.0) Adds pre-check to skip impossible strategies.
     Returns: (target_id, list_of_primer_data_dicts, error_message_or_None)
     """
     # 1. Define Retry Strategies
@@ -211,20 +218,41 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db):
         return (target_id, [], error) 
 
     all_specific_pairs_for_target = []
+    seq_len = len(target_sequence)
 
     # 3. Loop through all strategies
     for strategy_index, strategy_settings in enumerate(strategies):
-        primer_results = design_primers_for_sequence(target_sequence, target_id, strategy_settings)
-        num_returned = primer_results.get('PRIMER_PAIR_NUM_RETURNED', 0)
-        if num_returned == 0:
-            continue 
+        
+        # --- START OF FIX (v5.0) ---
+        # Get the minimum product size for this strategy
+        # We provide a default here just in case the strategy dict is malformed
+        default_range = [[150, 250]]
+        product_range_list = strategy_settings.get('PRIMER_PRODUCT_SIZE_RANGE', default_range)
+        
+        # Ensure the list is not empty and contains at least one range
+        if not product_range_list or not product_range_list[0]:
+            min_product_size = 150 # Fallback default
+        else:
+            min_product_size = product_range_list[0][0]
 
-        # 4. Check Specificity and Hairpin for all pairs
-        for i in range(num_returned):
-            fwd_seq = primer_results[f'PRIMER_LEFT_{i}_SEQUENCE']
-            rev_seq = primer_results[f'PRIMER_RIGHT_{i}_SEQUENCE']
-            
-            try:
+        # Check if the strategy is mathematically possible for this sequence length
+        if seq_len < min_product_size:
+            # This print is helpful for debugging, but can be commented out
+            # print(f"DEBUG: Skipping strategy {strategy_index} for {target_id} (seq_len {seq_len} < min_size {min_product_size})")
+            continue # Skip this impossible strategy and try the next one
+        # --- END OF FIX ---
+
+        try:
+            primer_results = design_primers_for_sequence(target_sequence, target_id, strategy_settings)
+            num_returned = primer_results.get('PRIMER_PAIR_NUM_RETURNED', 0)
+            if num_returned == 0:
+                continue 
+
+            # 4. Check Specificity and Hairpin for all pairs
+            for i in range(num_returned):
+                fwd_seq = primer_results[f'PRIMER_LEFT_{i}_SEQUENCE']
+                rev_seq = primer_results[f'PRIMER_RIGHT_{i}_SEQUENCE']
+                
                 # 4a. Specificity Check
                 fwd_hits = run_blast_specificity_check(fwd_seq, blast_db)
                 rev_hits = run_blast_specificity_check(rev_seq, blast_db)
@@ -248,41 +276,43 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db):
                 if worst_self_interaction_dg < END_STABILITY_DG_THRESHOLD:
                     continue # Fails 3' stability pre-filtering
 
-            except Exception as e:
-                return (target_id, [], f"BLAST or Hairpin check failed for {target_id}: {e}")
+                # 5. If it passes all checks, add flags and save
+                fwd_tm = primer_results[f'PRIMER_LEFT_{i}_TM']
+                rev_tm = primer_results[f'PRIMER_RIGHT_{i}_TM']
+                flags = []
+                if fwd_tm < IDEAL_TM_MIN or rev_tm < IDEAL_TM_MIN:
+                    flags.append("Low_Tm")
+                if fwd_tm > IDEAL_TM_MAX or rev_tm > IDEAL_TM_MAX:
+                    flags.append("High_Tm")
+                
+                fwd_rc = str(Seq(fwd_seq).reverse_complement())
+                rev_rc = str(Seq(rev_seq).reverse_complement())
+                pair_rank_str = f"{i} (Strategy {strategy_index})"
 
-            # 5. If it passes all checks, add flags and save
-            fwd_tm = primer_results[f'PRIMER_LEFT_{i}_TM']
-            rev_tm = primer_results[f'PRIMER_RIGHT_{i}_TM']
-            flags = []
-            if fwd_tm < IDEAL_TM_MIN or rev_tm < IDEAL_TM_MIN:
-                flags.append("Low_Tm")
-            if fwd_tm > IDEAL_TM_MAX or rev_tm > IDEAL_TM_MAX:
-                flags.append("High_Tm")
-            
-            fwd_rc = str(Seq(fwd_seq).reverse_complement())
-            rev_rc = str(Seq(rev_seq).reverse_complement())
-            pair_rank_str = f"{i} (Strategy {strategy_index})"
-
-            csv_row = {
-                'target_id': target_id, 'pair_rank': pair_rank_str, 
-                'flags': ";".join(flags) if flags else "OK", # (v4.0) Add flags
-                'fwd_primer_seq': fwd_seq, 'rev_primer_seq': rev_seq,
-                'fwd_primer_tailed': fwd_rc + FWD_TAIL,
-                'rev_primer_tailed': rev_rc + REV_TAIL,
-                'fwd_primer_tm': f"{fwd_tm:.2f}",
-                'rev_primer_tm': f"{rev_tm:.2f}",
-                'amplicon_size': primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE'],
-                'specificity_hits': f"F:{fwd_hits}, R:{rev_hits}"
-            }
-            
-            product_size = primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE']
-            fwd_start_in_gene = primer_results[f'PRIMER_LEFT_{i}'][0]
-            amp_start = target_info['start'] - 1 + fwd_start_in_gene
-            amp_end = amp_start + product_size
-            bed_row = f"{target_info['contig']}\t{amp_start}\t{amp_end}\t{target_id}_amplicon_{pair_rank_str}\t0\t+\n"
-            
-            all_specific_pairs_for_target.append({'csv_row': csv_row, 'bed_row': bed_row})
+                csv_row = {
+                    'target_id': target_id, 'pair_rank': pair_rank_str, 
+                    'flags': ";".join(flags) if flags else "OK", # (v4.0) Add flags
+                    'fwd_primer_seq': fwd_seq, 'rev_primer_seq': rev_seq,
+                    'fwd_primer_tailed': fwd_rc + FWD_TAIL,
+                    'rev_primer_tailed': rev_rc + REV_TAIL,
+                    'fwd_primer_tm': f"{fwd_tm:.2f}",
+                    'rev_primer_tm': f"{rev_tm:.2f}",
+                    'amplicon_size': primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE'],
+                    'specificity_hits': f"F:{fwd_hits}, R:{rev_hits}"
+                }
+                
+                product_size = primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE']
+                fwd_start_in_gene = primer_results[f'PRIMER_LEFT_{i}'][0]
+                amp_start = target_info['start'] - 1 + fwd_start_in_gene
+                amp_end = amp_start + product_size
+                bed_row = f"{target_info['contig']}\t{amp_start}\t{amp_end}\t{target_id}_amplicon_{pair_rank_str}\t0\t+\n"
+                
+                all_specific_pairs_for_target.append({'csv_row': csv_row, 'bed_row': bed_row})
+        
+        except Exception as e:
+            # This will catch errors from primer3 (like the one we saw) 
+            # or from the BLAST/hairpin checks
+            return (target_id, [], f"Error processing {target_id} (Strategy {strategy_index}): {e}")
 
     if not all_specific_pairs_for_target:
         return (target_id, [], f"Could not find a specific, non-hairpin primer pair for {target_id} after all strategies.")
