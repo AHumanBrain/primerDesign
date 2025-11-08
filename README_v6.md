@@ -44,9 +44,7 @@ This tool requires Python 3.7+ and several bioinformatics libraries and tools.
 2.  **Install Python Dependencies:**
     It's highly recommended to use a virtual environment.
     ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-    pip install biopython primer3-py tqdm
+    pip install -r requirements.txt
     ```
 
 3.  **Install NCBI BLAST+:**
