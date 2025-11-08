@@ -31,18 +31,14 @@ This Python tool provides a robust pipeline for designing specific, adapter-tail
 * **Tail-Only Mode:** A convenient utility to add standard adapter tails to a list of pre-existing forward and reverse primers.
 * **Comprehensive Output:** Generates CSV files with primer details (sequences, Tms, flags, specificity), BED files for amplicon visualization, and a detailed log file with warnings and failed targets.
 
-## Included Files
-
-* `design_v6.py`: The main Python script containing all functionalities.
-
 ## Installation
 
 This tool requires Python 3.7+ and several bioinformatics libraries and tools.
 
 1.  **Clone the Repository (or download `design_v6.py`):**
     ```bash
-    git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
-    cd your-repo-name
+    git clone https://github.com/AHumanBrain/primer_designer.git
+    cd primer_designer
     ```
 
 2.  **Install Python Dependencies:**
