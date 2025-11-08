@@ -62,26 +62,26 @@ The design pipeline follows a structured approach to ensure high-quality, multip
 
 ```mermaid
 graph TD
-    A[Start Design Mode] --> B{Load Genome, GFF, Targets};
-    B --> C{Create/Check BLAST DB};
-    C --> D{Parallel Primer Design for Each Target};
-    D --> D0[Strategy 0: Ideal Tm (59-61C), Prod Size (150-250bp)];
-    D --> D1[Strategy 1: Longer Prod Size (250-350bp)];
-    D --> D2[Strategy 2: Shorter Prod Size (100-150bp)];
-    D --> D3[Strategy 3: Relaxed Tm (55-65C)];
-    D0 & D1 & D2 & D3 --> E{Specificity & 3' End Stability Check};
-    E --> F{Collect All Valid Primer Options per Target};
-    F --> G{Check for Amplicon Overlaps (Best Primary Set)};
-    G -- Overlaps Detected (Tiled Design) --> H1[Force Multi-Pool Design];
-    G -- No Overlaps (Sparse Design) --> H2{User `--force-single-pool`?};
-    H2 -- No (Default) --> H1;
-    H2 -- Yes --> I[Attempt Single Pool Compatibility];
-    H1 --> J{Iteratively Find Minimum N Compatible Pools};
-    J --> K[Output N Pool Files];
-    I --> L[Output Single Pool File];
-    K & L --> M[Generate Log & Warnings];
+    A[Start Design Mode] --> B{Load_Genome_GFF_Targets};
+    B --> C{Create_Check_BLAST_DB};
+    C --> D{Parallel_Primer_Design_for_Each_Target};
+    D --> D0[Strategy_0_Ideal_Tm_ProdSize];
+    D --> D1[Strategy_1_Longer_ProdSize];
+    D --> D2[Strategy_2_Shorter_ProdSize];
+    D --> D3[Strategy_3_Relaxed_Tm];
+    D0 & D1 & D2 & D3 --> E{Specificity_3_End_Stability_Check};
+    E --> F{Collect_All_Valid_Primer_Options};
+    F --> G{Check_for_Amplicon_Overlaps};
+    G -- Overlaps_Detected_Tiled_Design --> H1[Force_Multi_Pool_Design];
+    G -- No_Overlaps_Sparse_Design --> H2{User_Force_Single_Pool_?};
+    H2 -- No_Default --> H1;
+    H2 -- Yes --> I[Attempt_Single_Pool_Compatibility];
+    H1 --> J{Iteratively_Find_Minimum_N_Compatible_Pools};
+    J --> K[Output_N_Pool_Files];
+    I --> L[Output_Single_Pool_File];
+    K & L --> M[Generate_Log_Warnings];
     M --> N[End];
-    E -- No Valid Pair --> O[Log Failed Target (Initial Design)];
+    E -- No_Valid_Pair --> O[Log_Failed_Target_Initial_Design];
     O --> F;
 ```
 
