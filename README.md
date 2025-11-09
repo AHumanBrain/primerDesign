@@ -67,20 +67,20 @@ The script's automated decision-making follows this path:
 
 ```mermaid
 graph TD
-    A[Start Design Mode] --> B{Load Genome, GFF, Targets (Robust Parsing v6.3)};
+    A[Start Design Mode] --> B{Load Genome, GFF, Targets - Robust Parsing v6.3};
     B --> C{Create/Check BLAST DB};
     C --> D{Parallel Primer Design for Each Target};
-    D --> D0[Strategy 0: Ideal (59-61C)];
-    D0 --> E{Specificity & 3-End Stability Check (v5.1)};
+    D --> D0[Strategy 0: Ideal 59-61C];
+    D0 --> E{Specificity & 3-End Stability Check v5.1};
     E -- Success --> F{Collect All Valid Primer Options};
-    E -- Fail --> D1[Try Fallback Strategies (Longer, Shorter, Relaxed Tm)];
+    E -- Fail --> D1[Try Fallback Strategies - Longer, Shorter, Relaxed Tm];
     D1 --> E;
     F --> G{Check for Amplicon Overlaps};
-    G -- Overlap (Tiled) --> H1[Force Multi-Pool Design];
-    G -- No (Sparse) --> H2{--force-single-pool?};
-    H2 -- No (Default) --> H1;
+    G -- Overlap/Tiled --> H1[Force Multi-Pool Design];
+    G -- No/Sparse --> H2{--force-single-pool?};
+    H2 -- No/Default --> H1;
     H2 -- Yes --> I[Attempt Single Pool];
-    H1 --> J{Find Minimum N Compatible Pools (v6.2)};
+    H1 --> J{Find Minimum N Compatible Pools v6.2};
     J --> K[Output N Pool Files];
     I --> L[Output Single Pool File];
     K & L --> M[Generate Log & Warnings];
