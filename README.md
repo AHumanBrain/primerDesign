@@ -40,6 +40,8 @@ It is an end-to-end solution that takes a genome, a list of gene targets, and pr
 
 ```
 git clone https://github.com/AHumanBrain/primer_designer.git
+```
+```
 cd primer_designer
 ```
 
