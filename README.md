@@ -39,9 +39,8 @@ It is an end-to-end solution that takes a genome, a list of gene targets, and pr
 **1. Clone the Repository**
 
 ```
-git clone [https://github.com/AHumanBrain/primer_designer.git](https://github.com/AHumanBrain/primer_designer.git)
+git clone https://github.com/AHumanBrain/primer_designer.git
 cd primer_designer
-
 ```
 
 **2. Install Python Dependencies**
@@ -49,7 +48,6 @@ This tool requires `biopython`, `primer3-py`, and `tqdm`.
 
 ```
 pip install -r requirements.txt
-
 ```
 
 **3. Install NCBI BLAST+**
