@@ -209,3 +209,11 @@ The `strategies` list, defined within the `process_single_target` function, prov
         # Strategy 3: Default product size, but with the most relaxed Tm range
         {'PRIMER_PRODUCT_SIZE_RANGE': [[150, 250]], 'PRIMER_MIN_TM': 55.0, 'PRIMER_MAX_TM': 65.0}, 
     ]
+
+Understanding TM & Stability Settings:
+IDEAL_TM_MIN / IDEAL_TM_MAX (e.g., 59.0-61.0): These serve a dual purpose:
+They set the strict boundaries for Strategy 0, the "ideal" design.
+They act as the flagging threshold. Any primer designed by a fallback strategy (e.g., with a Tm of 57°C) will receive a Low_Tm flag in the final CSV.
+PRIMER_OPT_TM (inside design_primers_for_sequence): This is set to 60.0. This is the exact $T_m$ Primer3 will try to achieve during Strategy 0.
+END_STABILITY_DG_THRESHOLD: This is the filter to reject primers. It checks the 3' end of the specific primer sequence to prevent 3'-extendable primer-dimers.
+HAIRPIN_STEM_TARGET_DG: This is the target for the iterative clamp builder. It uses primer3.calc_heterodimer to model the stem (clamp + 3' end of primer) to achieve this dG. This value (-12.5) is calibrated to produce final oligos with a $\Delta G$ of ~-14 kcal/mol in external calculators.
