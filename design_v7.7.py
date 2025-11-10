@@ -13,19 +13,26 @@ from functools import partial
 from tqdm import tqdm
 import re # Import re for parsing
 
-# --- Hardcoded Adapter Tails ---
-FWD_TAIL = 'AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT'
-REV_TAIL = 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC'
+# --- (v7.7) Refactored Hardcoded Adapter Tails ---
+# For 'fwd_tailed' (synthesis-ready) format
+FWD_P5_TRUNCATED = 'ACACTCTTTCCCTACACGACGCTCTTCCGATCT'
+REV_P7_TRUNCATED = 'GTGACTGGAGTTCAGACGTGTGCTCTTCCGATCT'
+# For 'rc_tailed' (template-generation) format
+FWD_RC_P5_TRUNCATED = 'AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT'
+REV_RC_P7_TRUNCATED = 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC'
 
 # --- Design Constants ---
-# (v6.2) TIGHT AT 60C for housekeeping genes
-END_STABILITY_DG_THRESHOLD = -5.0  # (kcal/mol) More stable (more negative) than this is bad
+END_STABILITY_DG_THRESHOLD = -9.0
 IDEAL_TM_MIN = 59.0
 IDEAL_TM_MAX = 61.0
 
-# --- (v6.2) Constants for Large-Panel Logic ---
-MAX_CLASH_RECOMMENDATION = 5       # Warn user if single-pool clashes exceed this
-MAX_COMPATIBILITY_ITERATIONS = 100 # Default max iterations for the auto-healing algorithm. Can be overridden by args.
+# --- Large-Panel Logic ---
+MAX_CLASH_RECOMMENDATION = 5
+MAX_COMPATIBILITY_ITERATIONS = 100
+
+# --- (v7.6) Constants for Hairpin Clamp Logic ---
+HAIRPIN_STEM_TARGET_DG = -12.5 # (kcal/mol) The target dG for the *stem* interaction
+HAIRPIN_CLAMP_MAX_LEN = 15     # Max bases to add
 
 # --- Core Helper Functions ---
 
@@ -34,13 +41,40 @@ def read_lines_from_file(file_path):
     with open(file_path, 'r') as f:
         return [line.strip() for line in f if line.strip()]
 
+# --- (v7.5) Corrected Helper Function for Hairpin Clamps ---
+
+def add_iterative_hairpin_clamp(oligo_sequence, primer_specific_seq, target_stem_dg, max_clamp_len):
+    """
+    (v7.5) Iteratively adds clamp bases to the 5' end.
+    Uses calc_heterodimer to model the stem interaction, aiming for the
+    calibrated HAIRPIN_STEM_TARGET_DG.
+    """
+    try:
+        primer_specific_seq_rc = str(Seq(primer_specific_seq).reverse_complement())
+        
+        best_oligo = oligo_sequence
+        best_stem_dg = 0.0 # dG for 0-length clamp
+
+        for i in range(1, min(max_clamp_len, len(primer_specific_seq_rc)) + 1):
+            clamp_seq = primer_specific_seq_rc[-i:]
+            
+            stem_dg = primer3.calc_heterodimer(clamp_seq, primer_specific_seq).dg / 1000.0
+
+            if abs(stem_dg - target_stem_dg) < abs(best_stem_dg - target_stem_dg):
+                best_oligo = clamp_seq + oligo_sequence
+                best_stem_dg = stem_dg
+            elif stem_dg < best_stem_dg: 
+                break
+            
+        return best_oligo
+    
+    except Exception as e:
+        print(f"Warning: Could not add hairpin clamp to {oligo_sequence[:20]}... Error: {e}")
+        return oligo_sequence 
+
 # --- Mode 1: Design Pipeline Functions ---
 
 def create_blast_db_if_needed(genome_fasta_path, blast_db_prefix):
-    """
-    Checks if a BLAST database exists. If not, it creates one from the provided
-    genome FASTA, using Biopython to robustly clean headers and format.
-    """
     db_files_exist = os.path.exists(f"{blast_db_prefix}.nin") or os.path.exists(f"{blast_db_prefix}.nhr")
     
     if db_files_exist:
@@ -59,7 +93,7 @@ def create_blast_db_if_needed(genome_fasta_path, blast_db_prefix):
     try:
         for record in SeqIO.parse(genome_fasta_path, "fasta"):
             record.id = record.id.split()[0]
-            record.description = '' # Clear the description
+            record.description = '' 
             cleaned_records.append(record)
     except Exception as e:
          raise ValueError(f"Biopython could not parse '{genome_fasta_path}'. It may not be a valid FASTA file. Original error: {e}")
@@ -80,13 +114,7 @@ def create_blast_db_if_needed(genome_fasta_path, blast_db_prefix):
         raise
 
 def parse_gff(gff_file):
-    """
-    (v6.3) Parses a GFF file to extract gene coordinates.
-    Robustly checks for 'Name=', 'gene=', and 'locus_tag=' attributes.
-    """
     gene_coords = {}
-    # Compile regex to find common gene name attributes
-    # This looks for Name=, gene=, or locus_tag= followed by the ID
     gene_attr_re = re.compile(r"(?:Name|gene|locus_tag)=([^;]+)")
 
     with open(gff_file) as f:
@@ -98,15 +126,12 @@ def parse_gff(gff_file):
             contig, start, end, strand = parts[0], int(parts[3]), int(parts[4]), parts[6]
             attributes = parts[8]
             
-            # Find all potential matches in the attributes string
             matches = gene_attr_re.findall(attributes)
             if not matches:
                 continue
 
-            # Add coordinates for all found identifiers (Name, gene, locus_tag)
-            # This allows the user to use 'thrA' or 'b0002' and find the same gene
             for gene_name in matches:
-                if gene_name not in gene_coords: # Avoid overwriting if already found
+                if gene_name not in gene_coords: 
                     gene_coords[gene_name] = {
                         'contig': contig, 
                         'start': start, 
@@ -120,9 +145,7 @@ def parse_gff(gff_file):
     return gene_coords
 
 def extract_target_sequence(genome_records, gene_coords, target_id):
-    """Extracts the DNA sequence for a target gene from the genome."""
     if target_id not in gene_coords:
-        # Return a non-None error message
         return None, None, f"Warning: Target ID '{target_id}' not found in GFF file. Skipping."
     
     target_info = gene_coords[target_id]
@@ -131,44 +154,35 @@ def extract_target_sequence(genome_records, gene_coords, target_id):
     if contig_id not in genome_records:
         core_contig_id = contig_id.split('|')[-1] if '|' in contig_id else contig_id
         if core_contig_id not in genome_records:
-             # Return a non-None error message
              return None, None, f"Warning: Contig '{contig_id}' (or '{core_contig_id}') for gene '{target_id}' not found in FASTA file. Skipping."
         target_info['contig'] = core_contig_id
     
     contig_seq = genome_records[target_info['contig']].seq
     start, end = target_info['start'] - 1, target_info['end']
     target_seq = contig_seq[start:end]
-    # Return a None error message on success
     return str(target_seq), target_info, None
 
 def design_primers_for_sequence(sequence, target_id, strategy_settings):
-    """
-    Uses primer3-py to design primers for a given sequence.
-    Applies 'strategy_settings' to override the 'global_args' defaults.
-    """
     seq_args = {'SEQUENCE_ID': target_id, 'SEQUENCE_TEMPLATE': sequence}
     
-    # (v6.2) "Tight at 60C" settings for housekeeping genes
     global_args = {
         'PRIMER_OPT_SIZE': 20,
         'PRIMER_MIN_SIZE': 19,
         'PRIMER_MAX_SIZE': 22,
         'PRIMER_OPT_TM': 60.0,
-        'PRIMER_MIN_TM': IDEAL_TM_MIN, # 59.0
-        'PRIMER_MAX_TM': IDEAL_TM_MAX, # 61.0
+        'PRIMER_MIN_TM': IDEAL_TM_MIN,
+        'PRIMER_MAX_TM': IDEAL_TM_MAX,
         'PRIMER_MIN_GC': 40.0,
         'PRIMER_MAX_GC': 60.0,
-        'PRIMER_PRODUCT_SIZE_RANGE': [[150, 250]], # Default
+        'PRIMER_PRODUCT_SIZE_RANGE': [[150, 250]],
         'PRIMER_NUM_RETURN': 20
     }
     
-    # Apply strategy-specific settings, overriding defaults
     global_args.update(strategy_settings)
     
     return primer3.design_primers(seq_args, global_args)
 
 def run_blast_specificity_check(primer_seq, blast_db_path):
-    """Runs blastn for a single primer sequence and returns the number of exact matches."""
     command = [
         'blastn', '-query', '-', '-db', blast_db_path, '-task', 'blastn-short',
         '-outfmt', '6', '-perc_identity', '100', '-qcov_hsp_perc', '100'
@@ -177,14 +191,10 @@ def run_blast_specificity_check(primer_seq, blast_db_path):
     return len(process.stdout.strip().split('\n')) if process.stdout.strip() else 0
 
 def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix, final_warnings, failed_targets_initial):
-    """
-    Writes all collected primer data from the design mode to consolidated files.
-    """
     if not all_csv_rows:
         print(f"\nNo specific primers were successfully designed for '{output_prefix}'.")
         return
         
-    # --- Write CSV and BED Files ---
     csv_file, bed_file = f"{output_prefix}.csv", f"{output_prefix}.bed"
     csv_headers = [
         'target_id', 'pair_rank', 'flags',
@@ -201,7 +211,6 @@ def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix, final_w
         bedf.writelines(all_bed_rows)
     print(f"\nResults for {len(all_bed_rows)} specific targets saved to '{csv_file}' and '{bed_file}'")
     
-    # --- Write Log File ---
     log_file = f"{output_prefix}.log.txt"
     with open(log_file, 'w') as logf:
         logf.write(f"--- Design Log for {output_prefix} ---\n\n")
@@ -225,15 +234,8 @@ def write_design_output_files(all_csv_rows, all_bed_rows, output_prefix, final_w
             
     print(f"A detailed log of warnings has been saved to '{log_file}'")
 
-def process_single_target(target_id, genome_records, gene_coords, blast_db, force_multiprime):
-    """
-    (v6.2 Refactor)
-    Finds ALL specific, non-hairpin pairs.
-    First, it tries the "ideal" global settings.
-    If that fails, it loops through relaxed "fallback" strategies.
-    """
+def process_single_target(target_id, genome_records, gene_coords, blast_db, force_multiprime, oligo_format, add_hairpin_clamp):
     
-    # 1. Extract Sequence
     target_sequence, target_info, error = extract_target_sequence(genome_records, gene_coords, target_id)
     if not target_sequence:
         return (target_id, [], error) 
@@ -241,9 +243,7 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db, forc
     all_specific_pairs_for_target = []
     seq_len = len(target_sequence)
 
-    # 2. Define Function to Process Primer3 Results
     def find_valid_pairs(primer_results, strategy_name):
-        """Inner function to check specificity and 3' stability."""
         num_returned = primer_results.get('PRIMER_PAIR_NUM_RETURNED', 0)
         if num_returned == 0:
             return False 
@@ -254,19 +254,17 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db, forc
             rev_seq = primer_results[f'PRIMER_RIGHT_{i}_SEQUENCE']
             
             try:
-                # 4a. Specificity Check (v6.0 logic)
                 fwd_hits = run_blast_specificity_check(fwd_seq, blast_db)
                 rev_hits = run_blast_specificity_check(rev_seq, blast_db)
             except Exception as e:
                 print(f"Warning: BLAST check failed for {target_id} pair {i}: {e}. Skipping pair.")
-                continue # Skip this pair
+                continue 
 
             specificity_ok = (fwd_hits == 1 and rev_hits == 1)
             
             if not force_multiprime and not specificity_ok:
                 continue 
             
-            # 4b. 3' End Stability Check
             fwd_self_dg = primer3.calc_end_stability(fwd_seq, fwd_seq).dg / 1000.0
             rev_self_dg = primer3.calc_end_stability(rev_seq, rev_seq).dg / 1000.0
             fwd_rev_dg1 = primer3.calc_end_stability(fwd_seq, rev_seq).dg / 1000.0
@@ -277,11 +275,32 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db, forc
             if worst_self_interaction_dg < END_STABILITY_DG_THRESHOLD:
                 continue 
 
-            # 5. If it passes all checks, add flags and save
             found_at_least_one = True 
             fwd_tm = primer_results[f'PRIMER_LEFT_{i}_TM']
             rev_tm = primer_results[f'PRIMER_RIGHT_{i}_TM']
             flags = []
+            
+            # --- (v7.7) Refactored oligo formatting ---
+            if oligo_format == 'fwd_tailed':
+                fwd_primer_tailed = FWD_P5_TRUNCATED + fwd_seq
+                rev_primer_tailed = REV_P7_TRUNCATED + rev_seq
+                
+                if add_hairpin_clamp:
+                    flags.append("HairpinClamp")
+                    fwd_primer_tailed = add_iterative_hairpin_clamp(
+                        fwd_primer_tailed, fwd_seq, HAIRPIN_STEM_TARGET_DG, HAIRPIN_CLAMP_MAX_LEN
+                    )
+                    rev_primer_tailed = add_iterative_hairpin_clamp(
+                        rev_primer_tailed, rev_seq, HAIRPIN_STEM_TARGET_DG, HAIRPIN_CLAMP_MAX_LEN
+                    )
+            else:
+                # Default 'rc_tailed' (template) format
+                fwd_rc = str(Seq(fwd_seq).reverse_complement())
+                rev_rc = str(Seq(rev_seq).reverse_complement())
+                fwd_primer_tailed = fwd_rc + FWD_RC_P5_TRUNCATED
+                rev_primer_tailed = rev_rc + REV_RC_P7_TRUNCATED
+            # --- End v7.7 Refactor ---
+
             if fwd_tm < IDEAL_TM_MIN or rev_tm < IDEAL_TM_MIN:
                 flags.append("Low_Tm")
             if fwd_tm > IDEAL_TM_MAX or rev_tm > IDEAL_TM_MAX:
@@ -290,16 +309,14 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db, forc
             if force_multiprime and not specificity_ok:
                 flags.append(f"Multi_Hit_FWD:{fwd_hits}_REV:{rev_hits}")
 
-            fwd_rc = str(Seq(fwd_seq).reverse_complement())
-            rev_rc = str(Seq(rev_seq).reverse_complement())
             pair_rank_str = f"{i} ({strategy_name})"
 
             csv_row = {
                 'target_id': target_id, 'pair_rank': pair_rank_str, 
                 'flags': ";".join(flags) if flags else "OK", 
+                'fwd_primer_tailed': fwd_primer_tailed,
+                'rev_primer_tailed': rev_primer_tailed,
                 'fwd_primer_seq': fwd_seq, 'rev_primer_seq': rev_seq,
-                'fwd_primer_tailed': fwd_rc + FWD_TAIL,
-                'rev_primer_tailed': rev_rc + REV_TAIL,
                 'fwd_primer_tm': f"{fwd_tm:.2f}",
                 'rev_primer_tm': f"{rev_tm:.2f}",
                 'amplicon_size': primer_results[f'PRIMER_PAIR_{i}_PRODUCT_SIZE'],
@@ -316,10 +333,8 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db, forc
         
         return found_at_least_one
 
-    # 3. First, try the "Ideal" Strategy (Strategy 0)
     try:
         ideal_strategy_settings = {} 
-        # Get min product size from default global_args in design_primers_for_sequence
         ideal_min_product_size = 150 
         
         ideal_strategy_possible = (seq_len >= ideal_min_product_size)
@@ -331,9 +346,7 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db, forc
     except Exception as e:
         return (target_id, [], f"Error processing {target_id} (Strategy 0): {e}")
 
-    # 4. If no primers were found, loop through fallback strategies
     if not all_specific_pairs_for_target:
-        # Define Fallback Strategies
         fallback_strategies = [
             {'name': 'Strategy 1 (Longer)', 'settings': {'PRIMER_PRODUCT_SIZE_RANGE': [[250, 350]], 'PRIMER_MIN_TM': 57.0, 'PRIMER_MAX_TM': 63.0}},
             {'name': 'Strategy 2 (Shorter)', 'settings': {'PRIMER_PRODUCT_SIZE_RANGE': [[100, 150]], 'PRIMER_MIN_TM': 57.0, 'PRIMER_MAX_TM': 63.0}},
@@ -357,17 +370,12 @@ def process_single_target(target_id, genome_records, gene_coords, blast_db, forc
                 print(f"Warning: Strategy {strategy_name} for {target_id} failed: {e}")
                 continue 
 
-    # 5. Final check
     if not all_specific_pairs_for_target:
         return (target_id, [], f"Could not find a specific, non-hairpin primer pair for {target_id} after all strategies.")
     
     return (target_id, all_specific_pairs_for_target, None) 
 
 def find_compatible_set(target_to_primers_map, pool_name, max_iterations):
-    """
-    (v6.2) Attempts to find a compatible set of primers.
-    max_iterations is now passed from args, with a top-level constant as default.
-    """
     print(f"\n--- Starting Compatibility Check & Auto-Healing for {pool_name} ---")
     
     if len(target_to_primers_map) < 2:
@@ -381,7 +389,7 @@ def find_compatible_set(target_to_primers_map, pool_name, max_iterations):
     best_clash_list = []
     
     for iteration in range(max_iterations):
-        current_primer_set = [] # List of (primer_name, seq, target_id)
+        current_primer_set = [] 
         valid_set = True
         
         for target_id, index in current_indices.items():
@@ -403,7 +411,7 @@ def find_compatible_set(target_to_primers_map, pool_name, max_iterations):
             return final_set, best_clash_list
 
         clashes = {} 
-        all_clashes = [] # List of (msg, dg_val) tuples
+        all_clashes = [] 
 
         for (p1_name, p1_seq, p1_target), (p2_name, p2_seq, p2_target) in itertools.combinations(current_primer_set, 2):
             if p1_target == p2_target:
@@ -455,10 +463,8 @@ def find_compatible_set(target_to_primers_map, pool_name, max_iterations):
     return final_set, best_clash_list 
 
 def check_amplicon_overlap(best_primer_pairs):
-    """Checks if any of the 'best' amplicons in a set overlap."""
     amplicons_by_contig = {}
     
-    # 1. Parse BED rows and store coordinates by contig
     for pair_data in best_primer_pairs:
         bed_row = pair_data['bed_row'].strip().split('\t')
         contig, start, end = bed_row[0], int(bed_row[1]), int(bed_row[2])
@@ -467,15 +473,12 @@ def check_amplicon_overlap(best_primer_pairs):
             amplicons_by_contig[contig] = []
         amplicons_by_contig[contig].append((start, end))
         
-    # 2. Check for overlaps on each contig
     for contig, coords in amplicons_by_contig.items():
         if len(coords) < 2:
             continue
         
-        # Sort by start position
         sorted_coords = sorted(coords, key=lambda x: x[0])
         
-        # Compare each amplicon to the next one
         for i in range(len(sorted_coords) - 1):
             current_end = sorted_coords[i][1]
             next_start = sorted_coords[i+1][0]
@@ -486,12 +489,10 @@ def check_amplicon_overlap(best_primer_pairs):
     return False 
 
 def run_design_mode(args):
-    """(v6.2 Refactor) Runs the script in 'Full Design' mode."""
     print("Running in 'Full Design' mode...")
     failed_targets_initial = []
 
     try:
-        # 1. Load shared data ONCE
         create_blast_db_if_needed(args.genome, args.blast_db)
         cleaned_genome_path = f"{os.path.splitext(args.genome)[0]}.cleaned.fna"
         print(f"Loading CLEANED genome from '{cleaned_genome_path}'...")
@@ -501,14 +502,14 @@ def run_design_mode(args):
         print(f"Reading target IDs from '{args.target_file}'...")
         target_ids = read_lines_from_file(args.target_file)
 
-        # 2. Create a "partial" function for parallel processing
         process_func = partial(process_single_target,
                                genome_records=genome_records,
                                gene_coords=gene_coords,
                                blast_db=args.blast_db,
-                               force_multiprime=args.force_multiprime) # (v6.0) Pass the new argument
+                               force_multiprime=args.force_multiprime,
+                               oligo_format=args.oligo_format, 
+                               add_hairpin_clamp=args.add_hairpin_clamp) 
 
-        # 3. Create a process pool and run the tasks in parallel
         num_workers = os.cpu_count()
         print(f"Starting parallel processing with {num_workers} workers for {len(target_ids)} targets...")
         
@@ -516,7 +517,6 @@ def run_design_mode(args):
         with multiprocessing.Pool(processes=num_workers) as pool:
             results = list(tqdm(pool.imap_unordered(process_func, target_ids), total=len(target_ids), desc="Designing Primers"))
 
-        # 4. Collect results into a map: {target_id -> [list_of_primer_options]}
         target_to_primers_map = {}
         for target_id, primer_list, error in results:
             if primer_list:
@@ -530,17 +530,12 @@ def run_design_mode(args):
              print("\nNo primers were found for any target with the specified criteria. Exiting.") 
              return
              
-        # --- (v4.3) NEW "Meta-Pipeline" LOGIC FORK ---
-        
-        # 5. Check for overlaps in the BEST set of primers
         best_primer_pairs = []
         for target_id in target_ids:
              if target_id in target_to_primers_map:
                  best_primer_pairs.append(target_to_primers_map[target_id][0]) 
         
         overlap_detected = check_amplicon_overlap(best_primer_pairs)
-        
-        # 6. Decide which strategy to use
         
         if overlap_detected:
             print("\nOverlap detected between amplicons. This is a 'tiled' design.")
@@ -555,8 +550,6 @@ def run_design_mode(args):
             else:
                 print("Defaulting to safest method: finding minimum number of compatible pools.")
                 run_minimum_pool_logic = True
-        
-        # ---
         
         if run_minimum_pool_logic:
             print("\nDesign Strategy: Searching for the minimum number of compatible pools...")
@@ -634,7 +627,6 @@ def run_design_mode(args):
 # --- Mode 2: Tail-Only Pipeline Functions ---
 
 def write_tail_only_csv(all_csv_rows, output_prefix):
-    """Writes the results of the tail-only mode to a CSV file."""
     if not all_csv_rows:
         print("\nNo primers were processed.")
         return
@@ -652,7 +644,6 @@ def write_tail_only_csv(all_csv_rows, output_prefix):
     print(f"Results saved to '{csv_file}'")
 
 def run_tail_only_mode(args):
-    """Runs the logic to simply tail existing primer files."""
     print(f"Reading forward primers from: {args.tail_fwd_file}")
     print(f"Reading reverse primers from: {args.tail_rev_file}")
     
@@ -672,11 +663,17 @@ def run_tail_only_mode(args):
         fwd_seq = fwd_primers[i]
         rev_seq = rev_primers[i]
         
-        fwd_rc = str(Seq(fwd_seq).reverse_complement())
-        rev_rc = str(Seq(rev_seq).reverse_complement())
-        
-        fwd_tailed = fwd_rc + FWD_TAIL
-        rev_tailed = rev_rc + REV_TAIL
+        # --- (v7.7) Refactored oligo formatting ---
+        if args.oligo_format == 'fwd_tailed':
+            fwd_tailed = FWD_P5_TRUNCATED + fwd_seq
+            rev_tailed = REV_P7_TRUNCATED + rev_seq
+        else:
+            # Default 'rc_tailed' (template) format
+            fwd_rc = str(Seq(fwd_seq).reverse_complement())
+            rev_rc = str(Seq(rev_seq).reverse_complement())
+            fwd_tailed = fwd_rc + FWD_RC_P5_TRUNCATED
+            rev_tailed = rev_rc + REV_RC_P7_TRUNCATED
+        # --- End v7.7 Refactor ---
         
         all_csv_rows.append({
             'pair_id': f"pair_{i+1}",
@@ -693,7 +690,6 @@ def run_tail_only_mode(args):
 def main():
     parser = argparse.ArgumentParser(description="Design specific, adapter-tailed primers for multiple targets.")
     
-    # Mode 1: Full Design
     design_group = parser.add_argument_group('Mode 1: Full Design Pipeline')
     design_group.add_argument('--genome', help="Path to the reference genome in FASTA format.")
     design_group.add_argument('--gff', help="Path to a GFF file for gene coordinate lookups.")
@@ -703,21 +699,27 @@ def main():
                               help="Force the script to find the 'best-available' single pool (default: finds minimum N-pools).")
     design_group.add_argument('--force-multiprime', action='store_true',
                               help="Allows primers that hit multiple identical locations in the genome. Useful for multi-copy genes like 16S rRNA. (Default: strict single-hit specificity).")
-    # (v6.2) argparse default now comes from the top-level constant
     design_group.add_argument('--max-compatibility-iterations', type=int, default=MAX_COMPATIBILITY_ITERATIONS,
                               help=f"Maximum iterations for the compatibility auto-healing algorithm. (Default: {MAX_COMPATIBILITY_ITERATIONS})")
+    
+    design_group.add_argument('--oligo-format', choices=['rc_tailed', 'fwd_tailed'], default='rc_tailed',
+                              help="Format for 'fwd_primer_tailed' and 'rev_primer_tailed' columns. 'rc_tailed' (default) is reverse-complement + full tail. 'fwd_tailed' is forward-seq + truncated P5/P7 tail (synthesis-ready).")
+    
+    # (v7.5.1) Corrected help string
+    design_group.add_argument('--add-hairpin-clamp', action='store_true',
+                              help=f"Iteratively adds a 5' clamp to 'fwd_tailed' oligos to form a hairpin with target dG ~{HAIRPIN_STEM_TARGET_DG} (stem only). REQUIRES --oligo-format fwd_tailed.")
 
-    # Mode 2: Tail-Only
     tail_group = parser.add_argument_group('Mode 2: Tail-Only Utility')
     tail_group.add_argument('--tail-fwd-file', help="Path to a text file with one forward primer per line.")
     tail_group.add_argument('--tail-rev-file', help="Path to a text file with one reverse primer per line.")
     
-    # Shared arguments
     parser.add_argument('--output-prefix', default='final_primers', help="Prefix for output files.")
     
     args = parser.parse_args()
 
-    # --- Route to the correct mode ---
+    if args.add_hairpin_clamp and args.oligo_format != 'fwd_tailed':
+        parser.error("--add-hairpin-clamp can only be used with --oligo-format fwd_tailed.")
+
     is_full_design_mode = all([args.genome, args.gff, args.target_file, args.blast_db])
     is_tail_only_mode = all([args.tail_fwd_file, args.tail_rev_file])
 
@@ -730,11 +732,14 @@ def main():
         print("Please choose only one mode by providing its respective arguments.")
         parser.print_help()
     else:
-        print("Error: You must provide the correct arguments for a mode.")
-        print("\nFor 'Full Design' mode, you MUST provide:")
-        print("   --genome, --gff, --target-file, and --blast-db")
-        print("\nFor 'Tail-Only' mode, you MUST provide:")
-        print("   --tail-fwd-file and --tail-rev-file")
+        if args.tail_fwd_file or args.tail_rev_file:
+             print("Error: For 'Tail-Only' mode, you MUST provide BOTH --tail-fwd-file and --tail-rev-file.")
+        else:
+            print("Error: You must provide the correct arguments for a mode.")
+            print("\nFor 'Full Design' mode, you MUST provide:")
+            print("   --genome, --gff, --target-file, and --blast-db")
+            print("\nFor 'Tail-Only' mode, you MUST provide:")
+            print("   --tail-fwd-file and --tail-rev-file")
         parser.print_help()
 
 if __name__ == "__main__":
