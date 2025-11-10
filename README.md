@@ -29,9 +29,7 @@ It is an end-to-end solution that takes a genome, a list of gene targets, and pr
 
 **1. Clone the Repository**
 ```bash
-git clone https://github.com/AHumanBrain/primer_designer.git
-```
-```
+git clone [https://github.com/AHumanBrain/primer_designer.git](https://github.com/AHumanBrain/primer_designer.git)
 cd primer_designer
 ```
 
@@ -182,3 +180,32 @@ MAX_COMPATIBILITY_ITERATIONS = 100
 # Calibrated value from user tests (v7.6) to match IDT's calculator.
 HAIRPIN_STEM_TARGET_DG = -12.5 # (kcal/mol) The target dG for the *stem* interaction
 HAIRPIN_CLAMP_MAX_LEN = 15     # Max bases to add
+
+# Primer3 global arguments are set within design_primers_for_sequence.
+# These define the initial target parameters for Primer3.
+# Important parameters here (refer to Primer3 documentation for full list):
+# 'PRIMER_OPT_SIZE': 20,         # Target primer length
+# 'PRIMER_MIN_SIZE': 19,         # Minimum primer length
+# 'PRIMER_MAX_SIZE': 22,         # Maximum primer length
+# 'PRIMER_OPT_TM': 60.0,         # Primer3 actively tries to design primers with this Tm
+# 'PRIMER_MIN_GC': 40.0,         # Minimum GC content percentage
+# 'PRIMER_MAX_GC': 60.0,         # Maximum GC content percentage
+# 'PRIMER_PRODUCT_SIZE_RANGE': [[150, 250]], # Default amplicon size range
+# 'PRIMER_NUM_RETURN': 20        # Number of primer pairs Primer3 attempts to return per sequence
+```
+
+The `strategies` list, defined within the `process_single_target` function, provides sequential alternative parameter sets for Primer3 to try if the initial attempt fails. Modifying these allows you to define a precise retry logic:
+
+```python
+# --- Inside process_single_target function ---
+    # 1. Define Retry Strategies
+    strategies = [
+        # Strategy 0: Your primary, tightest attempt, using the IDEAL Tms
+        {'PRIMER_PRODUCT_SIZE_RANGE': [[150, 250]], 'PRIMER_MIN_TM': IDEAL_TM_MIN, 'PRIMER_MAX_TM': IDEAL_TM_MAX}, 
+        # Strategy 1: Longer product size range, with slightly relaxed Tms from the ideal
+        {'PRIMER_PRODUCT_SIZE_RANGE': [[250, 350]], 'PRIMER_MIN_TM': 57.0, 'PRIMER_MAX_TM': 63.0}, 
+        # Strategy 2: Shorter product size range, with slightly relaxed Tms from the ideal
+        {'PRIMER_PRODUCT_SIZE_RANGE': [[100, 150]], 'PRIMER_MIN_TM': 57.0, 'PRIMER_MAX_TM': 63.0}, 
+        # Strategy 3: Default product size, but with the most relaxed Tm range
+        {'PRIMER_PRODUCT_SIZE_RANGE': [[150, 250]], 'PRIMER_MIN_TM': 55.0, 'PRIMER_MAX_TM': 65.0}, 
+    ]
