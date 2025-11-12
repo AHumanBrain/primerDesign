@@ -19,18 +19,23 @@ REV_P7_TRUNCATED = 'GTGACTGGAGTTCAGACGTGTGCTCTTCCGATCT'
 FWD_RC_P5_TRUNCATED = 'AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT'
 REV_RC_P7_TRUNCATED = 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC'
 
+
 # --- Design Constants ---
 END_STABILITY_DG_THRESHOLD = -9.0
 IDEAL_TM_MIN = 59.0
 IDEAL_TM_MAX = 61.0
+# (v7.9) Created a single source of truth for min primer size
+IDEAL_PRIMER_MIN_SIZE = 19 
 
 # --- Large-Panel Logic ---
 MAX_CLASH_RECOMMENDATION = 5
-MAX_COMPATIBILITY_ITERATIONS = 5000 # Set default to 5000 based on our 500-gene test
+# (v7.9) Set the default for iterations to 5000, as discussed
+MAX_COMPATIBILITY_ITERATIONS = 5000
 
-# --- (v7.6) Constants for Hairpin Clamp Logic ---
-HAIRPIN_STEM_TARGET_DG = -12.5 # (kcal/mol) The target dG for the *stem* interaction
-HAIRPIN_CLAMP_MAX_LEN = 15     # Max bases to add
+# --- (v7.9) Constants for Hairpin Clamp Logic ---
+# Calibrated based on v7.5.1 results.
+HAIRPIN_STEM_TARGET_DG = -11.9 # (kcal/mol) Calibrated target dG for the *stem* interaction
+HAIRPIN_CLAMP_MAX_LEN = IDEAL_PRIMER_MIN_SIZE  # (v7.9) Linked to min primer size
 
 # --- Core Helper Functions ---
 
@@ -55,12 +60,8 @@ def add_iterative_hairpin_clamp(oligo_sequence, primer_specific_seq, target_stem
 
         for i in range(1, min(max_clamp_len, len(primer_specific_seq_rc)) + 1):
             
-            # --- FIX v7.8 ---
-            # The slice must be [:i] (from the *beginning* of the RC string)
-            # to get the complement of the 3' end of the original primer.
-            # The previous `[-i:]` was taking the complement of the 5' end.
+            # (v7.8) Use [:i] to get complement of the 3' end.
             clamp_seq = primer_specific_seq_rc[:i]
-            # --- END FIX ---
             
             stem_dg = primer3.calc_heterodimer(clamp_seq, primer_specific_seq).dg / 1000.0
 
@@ -171,7 +172,7 @@ def design_primers_for_sequence(sequence, target_id, strategy_settings):
     
     global_args = {
         'PRIMER_OPT_SIZE': 20,
-        'PRIMER_MIN_SIZE': 18,
+        'PRIMER_MIN_SIZE': IDEAL_PRIMER_MIN_SIZE, # (v7.9) Use constant
         'PRIMER_MAX_SIZE': 22,
         'PRIMER_OPT_TM': 60.0,
         'PRIMER_MIN_TM': IDEAL_TM_MIN,
@@ -532,6 +533,7 @@ def run_design_mode(args):
              return
              
         best_primer_pairs = []
+        # (v7.9) Iterate over keys, not original list
         for target_id in target_to_primers_map:
              best_primer_pairs.append(target_to_primers_map[target_id][0]) 
         
@@ -554,13 +556,12 @@ def run_design_mode(args):
         if run_minimum_pool_logic:
             print("\nDesign Strategy: Searching for the minimum number of compatible pools...")
             
-            for num_pools in range(1, len(target_to_primers_map) + 1):
+            # (v7.9) Iterate over keys, not original list
+            successful_targets = sorted(list(target_to_primers_map.keys()))
+            for num_pools in range(1, len(successful_targets) + 1):
                 print(f"\n--- Testing N = {num_pools} {'pool' if num_pools == 1 else 'pools'} ---")
                 
                 pools = [{} for _ in range(num_pools)]
-                # (v7.8) Bugfix: Need to iterate over the keys, not the original target_ids list
-                # This ensures we only try to pool genes that actually passed the design phase
-                successful_targets = sorted(list(target_to_primers_map.keys()))
                 for i, target_id in enumerate(successful_targets):
                     pool_index = i % num_pools
                     pools[pool_index][target_id] = target_to_primers_map[target_id]
@@ -698,6 +699,8 @@ def main():
                               help="Force the script to find the 'best-available' single pool (default: finds minimum N-pools).")
     design_group.add_argument('--force-multiprime', action='store_true',
                               help="Allows primers that hit multiple identical locations in the genome. Useful for multi-copy genes like 16S rRNA. (Default: strict single-hit specificity).")
+    
+    # (v7.9) argparse default now comes from the top-level constant
     design_group.add_argument('--max-compatibility-iterations', type=int, default=MAX_COMPATIBILITY_ITERATIONS,
                               help=f"Maximum iterations for the compatibility auto-healing algorithm. (Default: {MAX_COMPATIBILITY_ITERATIONS})")
     
