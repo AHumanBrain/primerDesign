@@ -273,5 +273,4 @@ For your beta testing, you want to build confidence with "easy" targets. You sho
 3.  **Reasonably Long:** Stick to genes that are **> 300 bp** long. This gives `primer3` plenty of room to find good primers.
 4.  **"Average" GC Content:** Avoid genes known to be in extremely A/T-rich or G/C-rich regions of the genome.
 
-The provided list of 20 housekeeping genes (`gyrB`, `recA`, `rpoD`, `gapA`, `ftsZ`, `mdh`, `gyrA`, `adk`, etc.) is the *perfect* "easy" list for beta testing.
-"""
+The provided list of 21 housekeeping genes (`gyrB`, `recA`, `rpoD`, `gapA`, `ftsZ`, `mdh`, `gyrA`, `adk`, etc.) is the *perfect* "easy" list for beta testing.
