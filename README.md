@@ -221,3 +221,56 @@ The `strategies` list, defined within the `process_single_target` function, prov
 * **`PRIMER_OPT_TM` (inside `design_primers_for_sequence`):** This is set to **`60.0`**. This is the exact $T_m$ Primer3 will try to achieve during Strategy 0.
 * **`END_STABILITY_DG_THRESHOLD`:** This is the *filter* to reject primers. It checks the 3' end of the *specific primer sequence* to prevent 3'-extendable primer-dimers.
 * **`HAIRPIN_STEM_TARGET_DG`:** This is the *target* for the iterative clamp builder. It uses `primer3.calc_heterodimer` to model the stem (clamp + 3' end of primer) to achieve this dG. This value (`-12.5`) is calibrated to produce final oligos with a $\Delta G$ of ~-14 kcal/mol in external calculators.
+
+"""
+### Category 1: Multi-Copy Genes (The Specificity Problem)
+
+These genes fail because they exist in multiple, often identical, copies throughout the genome. Your script's BLAST check (`fwd_hits == 1 and rev_hits == 1`) correctly identifies this.
+
+* **Problem:** A primer designed for `rrsD` will also bind to `rrsA`, `rrsB`, `rrsC`, etc. This results in `fwd_hits = 7`.
+* **Examples from Your List:**
+    * **rRNA Genes:** `rrlB`, `rrlD` (23S rRNA), `rrsD` (16S rRNA).
+    * **tRNA Genes:** `argL`, `argY`, `glnX`, `gltV`, `glyT`, `leuT`, `lysV`, `proM`, `tyrU`, `valT`.
+    * **Insertion Sequences (Mobile DNA):** `insC5`, `insE5`, `insF1`, `insF5`, `insH21`, `insH7`.
+    * **Repetitive Elements:** `rhsB` (RHS element).
+* **How to "Fix" (If You Must):** This is what the `--force-multiprime` flag is for. If you *want* to amplify all 7 copies of the 16S gene, you would use this flag. For beta testing, you should **avoid these genes** to confirm your single-copy specificity logic is working.
+
+---
+
+### Category 2: Highly Structured Genes (The 3'-End Stability Problem)
+
+This is the **exact reason `ileV` failed** in your previous run, and why many of these are failing now.
+
+* **Problem:** These genes encode functional RNAs (like tRNA) or regulatory elements. Their DNA sequence is *designed* to be self-complementary so the final RNA product can fold into complex, stable shapes. This means any 20-base primer you pick from this sequence has a very high chance of being able to fold back on itself, forming a stable 3'-extendable hairpin or self-dimer.
+* **How the Script Catches It:** The script *does* find primer pairs, but every single one of them fails this check: `worst_self_interaction_dg < END_STABILITY_DG_THRESHOLD` (i.e., the 3' end is more stable than -9.0 kcal/mol).
+* **Examples from Your List:**
+    * **All the tRNA genes again:** `ileV` (which you saw fail), `argL`, `glyT`, etc.
+    * **Leader Peptides/Attenuators:** `hisL`, `ilvX`, `leuL`, `pheM`, `tnaC`, `thrL`, `trpL`. These are regulatory regions that form complex hairpins to control gene expression.
+    * **Small Regulatory RNAs (sRNA):** `ibsB`, `ibsC`, `tisB`, `rirA`. These are *defined* by their complex secondary structures.
+* **How to "Fix" (NOT Recommended):** You would have to make your `END_STABILITY_DG_THRESHOLD` much more relaxed (e.g., `-15.0`). This is a **bad idea**, as you would be approving primers that are almost *guaranteed* to fail in the lab by forming dimers instead of amplifying their target.
+
+---
+
+### Category 3: Very Short Genes (The "No Room" Problem)
+
+* **Problem:** The entire gene is shorter than your *minimum* allowed amplicon size (e.g., 100-150 bp). `primer3` can't find a place to put two primers *and* have a 100+ bp product in the middle.
+* **Examples from Your List:**
+    * Many leader peptides (`hisL`, `trpL`) are tiny (e.g., 20-50 bp long).
+    * Many small regulatory RNAs (`tisB`) are also very short.
+    * `y-genes` (uncharacterized) are often just short, predicted open reading frames.
+* **How the Script Catches It:** The script tries all 4 strategies, and the `seq_len < min_product_size` pre-check skips the impossible ones. For the strategies that *are* possible (e.g., `[100, 150]` on a 120 bp gene), `primer3` often fails to find a pair that *also* meets the strict Tm and 3'-end stability rules in such a small space.
+* **How to "Fix":** You would have to add a new, "ultra-short" strategy (e.g., `PRIMER_PRODUCT_SIZE_RANGE: [[50, 80]]`). This is generally not recommended unless you are specifically designing for very short targets.
+
+---
+
+### Advice for Beta Testing (How to Avoid These)
+
+For your beta testing, you want to build confidence with "easy" targets. You should pick genes that are:
+
+1.  **Single-Copy:** Avoid all `rrs`, `rrl`, `trn` (tRNA), and `ins` (insertion) genes.
+2.  **Protein-Coding (not RNA):** Avoid leader peptides (`...L`) and sRNAs (`ibsB`, `tisB`).
+3.  **Reasonably Long:** Stick to genes that are **> 300 bp** long. This gives `primer3` plenty of room to find good primers.
+4.  **"Average" GC Content:** Avoid genes known to be in extremely A/T-rich or G/C-rich regions of the genome.
+
+Your list of 20 housekeeping genes (`gyrB`, `recA`, `rpoD`, `gapA`, `ftsZ`, `mdh`, `gyrA`, `adk`, etc.) is the *perfect* "easy" list for beta testing.
+"""
