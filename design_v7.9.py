@@ -14,8 +14,20 @@ from tqdm import tqdm
 import re # Import re for parsing
 
 # --- (v7.7) Refactored Hardcoded Adapter Tails ---
-FWD_P5_TRUNCATED = 'ACACTCTTTCCCTACACGACGCTCTTCCGATCT'
-REV_P7_TRUNCATED = 'GTGACTGGAGTTCAGACGTGTGCTCTTCCGATCT'
+# Tails are the full length from index to insert
+#FWD_P5_TRUNCATED = 'ACACTCTTTCCCTACACGACGCTCTTCCGATCT' 33-mer
+#REV_P7_TRUNCATED = 'GTGACTGGAGTTCAGACGTGTGCTCTTCCGATCT' 34-mer
+
+# --- (v7.9) Refactored Hardcoded Adapter Tails ---
+# Tails shortened to 20bp to keep final oligo length < 60nt
+# This allows for standard desalting without loss of the 5' clamp.
+
+# For 'fwd_tailed' (synthesis-ready) format
+FWD_P5_TRUNCATED = 'ACACGACGCTCTTCCGATCT' #20-mer; shaved off the 5'-most 13 bases
+REV_P7_TRUNCATED = 'GACGTGTGCTCTTCCGATCT' #20-mer; shaved off the 5' most 14 bases
+
+# For 'rc_tailed' (template-generation) format
+# These remain long as they are not for direct synthesis.
 FWD_RC_P5_TRUNCATED = 'AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT'
 REV_RC_P7_TRUNCATED = 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC'
 
@@ -172,7 +184,7 @@ def design_primers_for_sequence(sequence, target_id, strategy_settings):
     global_args = {
         'PRIMER_OPT_SIZE': 20,
         'PRIMER_MIN_SIZE': IDEAL_PRIMER_MIN_SIZE, # (v7.9) Use constant
-        'PRIMER_MAX_SIZE': 22,
+        'PRIMER_MAX_SIZE': 21,
         'PRIMER_OPT_TM': 60.0,
         'PRIMER_MIN_TM': IDEAL_TM_MIN,
         'PRIMER_MAX_TM': IDEAL_TM_MAX,
