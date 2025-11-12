@@ -224,7 +224,7 @@ The `strategies` list, defined within the `process_single_target` function, prov
 
 ## Categorizing Difficult-to-Target Genes (and Why They Are So):
 
-## Category 1: Multi-Copy Genes (The Specificity Problem)
+### Category 1: Multi-Copy Genes (The Specificity Problem)
 
 These genes fail because they exist in multiple, often identical, copies throughout the genome. Your script's BLAST check (`fwd_hits == 1 and rev_hits == 1`) correctly identifies this.
 
