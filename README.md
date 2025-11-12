@@ -224,8 +224,9 @@ The `strategies` list, defined within the `process_single_target` function, prov
 
 ### Categorizing difficult-to-target genes (and why they are so):
 
-"""
-### Category 1: Multi-Copy Genes (The Specificity Problem)
+---
+
+## Category 1: Multi-Copy Genes (The Specificity Problem)
 
 These genes fail because they exist in multiple, often identical, copies throughout the genome. Your script's BLAST check (`fwd_hits == 1 and rev_hits == 1`) correctly identifies this.
 
@@ -239,7 +240,7 @@ These genes fail because they exist in multiple, often identical, copies through
 
 ---
 
-### Category 2: Highly Structured Genes (The 3'-End Stability Problem)
+## Category 2: Highly Structured Genes (The 3'-End Stability Problem)
 
 This is the **exact reason `ileV` failed** in your previous run, and why many of these are failing now.
 
@@ -253,7 +254,7 @@ This is the **exact reason `ileV` failed** in your previous run, and why many of
 
 ---
 
-### Category 3: Very Short Genes (The "No Room" Problem)
+## Category 3: Very Short Genes (The "No Room" Problem)
 
 * **Problem:** The entire gene is shorter than your *minimum* allowed amplicon size (e.g., 100-150 bp). `primer3` can't find a place to put two primers *and* have a 100+ bp product in the middle.
 * **Examples from Your List:**
@@ -265,7 +266,7 @@ This is the **exact reason `ileV` failed** in your previous run, and why many of
 
 ---
 
-### Advice for Beta Testing (How to Avoid These)
+## Advice for Beta Testing (How to Avoid These)
 
 For your beta testing, you want to build confidence with "easy" targets. You should pick genes that are:
 
@@ -274,5 +275,5 @@ For your beta testing, you want to build confidence with "easy" targets. You sho
 3.  **Reasonably Long:** Stick to genes that are **> 300 bp** long. This gives `primer3` plenty of room to find good primers.
 4.  **"Average" GC Content:** Avoid genes known to be in extremely A/T-rich or G/C-rich regions of the genome.
 
-Your list of 20 housekeeping genes (`gyrB`, `recA`, `rpoD`, `gapA`, `ftsZ`, `mdh`, `gyrA`, `adk`, etc.) is the *perfect* "easy" list for beta testing.
+The provided list of 20 housekeeping genes (`gyrB`, `recA`, `rpoD`, `gapA`, `ftsZ`, `mdh`, `gyrA`, `adk`, etc.) is the *perfect* "easy" list for beta testing.
 """
