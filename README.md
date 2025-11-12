@@ -1,4 +1,4 @@
-# Multiplex PCR Primer Designer (v7.7)
+# Multiplex PCR Primer Designer (v7.9)
 
 This is a powerful, fully-automated command-line tool for designing robust, multiplex-ready PCR primer panels for amplicon-based next-generation sequencing.
 
