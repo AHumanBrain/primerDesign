@@ -222,6 +222,8 @@ The `strategies` list, defined within the `process_single_target` function, prov
 * **`END_STABILITY_DG_THRESHOLD`:** This is the *filter* to reject primers. It checks the 3' end of the *specific primer sequence* to prevent 3'-extendable primer-dimers.
 * **`HAIRPIN_STEM_TARGET_DG`:** This is the *target* for the iterative clamp builder. It uses `primer3.calc_heterodimer` to model the stem (clamp + 3' end of primer) to achieve this dG. This value (`-12.5`) is calibrated to produce final oligos with a $\Delta G$ of ~-14 kcal/mol in external calculators.
 
+### Categorizing difficult-to-target genes (and why they are so):
+
 """
 ### Category 1: Multi-Copy Genes (The Specificity Problem)
 
