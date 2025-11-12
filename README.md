@@ -118,7 +118,7 @@ python .\design_v7.7.py --genome "ecoli_genome.fna" --gff "genomic.gff" --target
 This command generates the synthesis-ready, self-folding hairpin primers.
 
 ```
-python .\design_v7.7.py --genome "ecoli_genome.fna" --gff "genomic.gff" --target-file "housekeeping_target_genes.txt" --blast-db "ecoli_db" --output-prefix "housekeeping_hairpins" --oligo-format "fwd_tailed" --add-hairpin-clamp
+python .\design_v7.7.py --genome "ecoli_genome.fna" --gff "genomic.gff" --target-file "housekeeping_genes.txt" --blast-db "ecoli_db" --output-prefix "housekeeping_genes_hairpins" --oligo-format "fwd_tailed" --add-hairpin-clamp
 ```
 
 ---
