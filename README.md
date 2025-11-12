@@ -50,7 +50,7 @@ This tool requires the `makeblastdb` and `blastn` command-line tools.
 
 https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000005845.2/
 
-<img width="958" height="1122" alt="image" src="https://github.com/user-attachments/assets/94a49e71-1f90-46e6-afd4-b133bd8115e1" />
+<img width="915" height="1102" alt="image" src="https://github.com/user-attachments/assets/a6a4098a-fd94-4ca7-b589-fd087d3b3de4" />
 
 ---
 
