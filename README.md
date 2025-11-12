@@ -238,7 +238,7 @@ These genes fail because they exist in multiple, often identical, copies through
 
 ---
 
-## Category 2: Highly Structured Genes (The 3'-End Stability Problem)
+### Category 2: Highly Structured Genes (The 3'-End Stability Problem)
 
 This is the **exact reason `ileV` failed** in your previous run, and why many of these are failing now.
 
@@ -252,7 +252,7 @@ This is the **exact reason `ileV` failed** in your previous run, and why many of
 
 ---
 
-## Category 3: Very Short Genes (The "No Room" Problem)
+### Category 3: Very Short Genes (The "No Room" Problem)
 
 * **Problem:** The entire gene is shorter than your *minimum* allowed amplicon size (e.g., 100-150 bp). `primer3` can't find a place to put two primers *and* have a 100+ bp product in the middle.
 * **Examples from Your List:**
