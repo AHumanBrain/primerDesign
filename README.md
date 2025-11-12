@@ -43,9 +43,14 @@ pip install -r requirements.txt
 
 **3. Install NCBI BLAST+**
 This tool requires the `makeblastdb` and `blastn` command-line tools.
-* **Download:** [NCBI BLAST+ Download Page](https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/LATEST/) (ncbi-blast-2.17.0+-win64.exe)
+* **Download:** [NCBI BLAST+ Download Page](https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/LATEST/)
+* (ncbi-blast-2.17.0+-win64.exe)
 * **Install:** Run the installer. **Crucially, ensure you check the box "Add BLAST+ to the system PATH."**
 * **Verify:** Open a *new* terminal/PowerShell and type `blastn -version`. You should see a version number.
+
+https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000005845.2/
+
+<img width="958" height="1122" alt="image" src="https://github.com/user-attachments/assets/94a49e71-1f90-46e6-afd4-b133bd8115e1" />
 
 ---
 
